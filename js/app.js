@@ -4,16 +4,35 @@ import { sfx, isMuted, setMuted } from './sound.js';
 import { MOCK, CONFIGURED, initAuth, call, flushQueue, queueAll } from './api.js';
 import { initMap, setCases, setUsers, invalidate, closeSheet, openSheet } from './mapview.js';
 import { openForm, hasDraft, next, back, closeForm, onPop, currentStep, setOnDone } from './form.js';
+import { ICON } from './icons.js';
 
 let me = null;
 let cases = [];
 let pendingDone = null;
 
 // ───────── 畫面切換 ─────────
+// 換頁動畫：進表單＝push（從右滑入）、回地圖＝pop、其他＝淡入
+let curView = 'boot';
 function showView(name) {
+  if (name === curView) return;
+  const anim = name === 'form' ? 'push-in' : (name === 'map' && curView === 'form') ? 'pop-in' : 'fade-in';
   ['boot', 'map', 'form', 'done'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== name));
+  const el = $('#view-' + name);
+  el.classList.remove('push-in', 'pop-in', 'fade-in');
+  void el.offsetWidth;
+  el.classList.add(anim);
+  el.addEventListener('animationend', () => el.classList.remove(anim), { once: true });
+  curView = name;
   if (name === 'map') invalidate();
 }
+
+// 靜態圖示
+$('#queue-badge .qi').innerHTML = ICON.clock({ size: 15 });
+$('#btn-refresh').innerHTML = ICON.refresh({ size: 20 });
+$('#btn-mylocation').innerHTML = ICON.locate({ size: 22 });
+$('#btn-new').innerHTML = ICON.plus({ size: 20 }) + '新增案件';
+$('#form-close').innerHTML = ICON.close({ size: 22 });
+$('.done-icon').innerHTML = ICON.check({ size: 40 });
 
 function bootMsg(title, msg, retry) {
   showView('boot');
@@ -21,11 +40,12 @@ function bootMsg(title, msg, retry) {
   $('#boot-msg').textContent = msg || '';
   const b = $('#boot-retry');
   b.classList.toggle('hidden', !retry);
+  $('#boot-spin').classList.toggle('hidden', !!retry || title !== '連線中…');
   b.onclick = () => { sfx.confirm(); location.reload(); };
 }
 
 // ───────── 靜音鍵 ─────────
-function drawMute() { $('#btn-mute').textContent = isMuted() ? '🔇' : '🔊'; }
+function drawMute() { $('#btn-mute').innerHTML = isMuted() ? ICON.mute({ size: 22 }) : ICON.speaker({ size: 22 }); }
 $('#btn-mute').onclick = () => { setMuted(!isMuted()); drawMute(); sfx.beep(); };
 drawMute();
 
@@ -137,7 +157,7 @@ setOnDone(({ steps, isEdit, queued, name, saved }) => {
 function showDone(d) {
   $('#done-title').textContent = d.queued ? '已排入佇列' : (d.isEdit ? '修改完成' : '送出完成');
   $('#done-msg').textContent = d.queued
-    ? `現在沒有訊號。「${d.name}」已存在手機裡，有訊號會自動送出（右上角 ⏳ 會顯示筆數）。`
+    ? `現在沒有訊號。「${d.name}」已存在手機裡，有訊號會自動送出（右上角時鐘圖示會顯示筆數）。`
     : `「${d.name}」已${d.isEdit ? '更新' : '建立'}，地圖上看得到了。`;
   showView('done');
   drawQueue();

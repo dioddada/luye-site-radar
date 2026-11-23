@@ -1,7 +1,8 @@
 // 引導式表單：一步一頁
 import { $, $$, esc, store, toast, fmt, num, totalArea, PING_M2, parseLatLng, needsResolve, extractUrl,
   compressImage, newCaseId, gmapUrl, workSummary, buildingsText,
-  NET_OPTS, FILM_OPTS, WINCH_SIDES, ROOF_MATS, normMaterials, materialsText, winchSideOf } from './util.js';
+  NET_OPTS, FILM_OPTS, WINCH_SIDES, ROOF_MATS, normMaterials, materialsText, winchSideOf, TILE_URL, TILE_OPTS } from './util.js';
+import { ICON } from './icons.js';
 import { sfx } from './sound.js';
 import { call, queueAdd } from './api.js';
 import { photoUrl } from './mapview.js';
@@ -14,6 +15,7 @@ let S = null;        // 表單狀態
 let fmap = null, fmarker = null, fcircle = null;
 let geoTimer = null, draftTimer = null, draftWarned = false;
 let submitting = false;
+let stepDir = '';   // 換步驟的動畫方向：push（下一步）／pop（返回）
 let onDone = () => {};
 
 function blank() {
@@ -79,7 +81,7 @@ export function openForm(c = null, useDraft = false) {
 /** 瀏覽器返回鍵 */
 export function onPop(state) {
   if (!S) return;
-  if (state && state.v === 'form') { S.step = state.step || 1; render(); }
+  if (state && state.v === 'form') { const ns = state.step || 1; stepDir = ns < S.step ? 'pop' : ns > S.step ? 'push' : ''; S.step = ns; render(); }
 }
 
 export function currentStep() { return S ? S.step : 0; }
@@ -110,11 +112,13 @@ function saveDraftNow() {
 function render() {
   $('#progress-bar').style.width = `${(S.step / STEPS) * 100}%`;
   $('#step-label').textContent = `${S.step} / ${STEPS}`;
-  $('#form-back').textContent = S.step === 1 ? '✕ 取消' : '◀ 返回';
-  $('#form-next').textContent = S.step === STEPS ? (S.mode === 'edit' ? '儲存修改 ✔' : '送出 ✔') : '下一步 ▶';
+  $('#form-back').textContent = S.step === 1 ? '取消' : '返回';
+  $('#form-next').textContent = S.step === STEPS ? (S.mode === 'edit' ? '儲存修改' : '送出') : '下一步';
   $('#form-next').disabled = false;
   const body = $('#form-body');
   body.scrollTop = 0;
+  body.classList.remove('push', 'pop');
+  if (stepDir) { void body.offsetWidth; body.classList.add(stepDir); stepDir = ''; }
   if (S.step === 1) renderStep1(body);
   if (S.step === 2) renderStep2(body);
   if (S.step === 3) renderStep3(body);
@@ -131,12 +135,12 @@ function showErr(msg) {
 // 步驟 1：定位與基本資料
 function renderStep1(body) {
   body.innerHTML = `
-    <div class="sec-title">步驟 1　定位與基本資料</div>
+    <div class="sec-title">定位與基本資料<small>步驟 1／3</small></div>
     <div id="form-map"></div>
     <div id="loc-info" class="loc-info"></div>
     <div class="btn-row" style="margin-bottom:10px">
-      <button class="btn small" id="btn-locate">◎ 重新定位</button>
-      <a class="btn small" id="btn-gmap" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;text-decoration:none">在 Google 地圖開啟</a>
+      <button class="btn small" id="btn-locate">${ICON.locate({ size: 16 })}重新定位</button>
+      <a class="btn small" id="btn-gmap" target="_blank" rel="noopener">${ICON.map({ size: 16 })}Google 地圖</a>
     </div>
     <div class="field">
       <label>貼上 Google 地圖或 LINE 位置的連結</label>
@@ -151,16 +155,17 @@ function renderStep1(body) {
     <div class="field">
       <label>照片 <span class="req">*至少 1 張</span></label>
       <div class="btn-row">
-        <label class="btn file-btn">📷 拍照<input type="file" accept="image/*" capture="environment" id="f-cam"></label>
-        <label class="btn file-btn">🖼 相簿<input type="file" accept="image/*" multiple id="f-album"></label>
+        <label class="btn file-btn">${ICON.camera({ size: 20 })}拍照<input type="file" accept="image/*" capture="environment" id="f-cam"></label>
+        <label class="btn file-btn">${ICON.photo({ size: 20 })}相簿<input type="file" accept="image/*" multiple id="f-album"></label>
       </div>
       <div class="photo-grid" id="photo-grid"></div>
     </div>
     ${errBox()}`;
 
   if (fmap) { fmap.remove(); fmap = null; }
-  fmap = L.map('form-map', { attributionControl: false }).setView(S.lat ? [S.lat, S.lng] : LUYE, S.lat ? 17 : 13);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(fmap);
+  fmap = L.map('form-map', { attributionControl: true }).setView(S.lat ? [S.lat, S.lng] : LUYE, S.lat ? 17 : 13);
+  fmap.attributionControl.setPrefix(false);
+  L.tileLayer(TILE_URL, TILE_OPTS).addTo(fmap);
   fmarker = null; fcircle = null;
   fmap.on('click', e => { sfx.beep(); setPos(e.latlng.lat, e.latlng.lng, null, true); });
   setTimeout(() => fmap && fmap.invalidateSize(), 60);
@@ -210,12 +215,12 @@ function drawPos(pan) {
     fmarker.on('dragend', () => { const p = fmarker.getLatLng(); sfx.beep(); setPos(p.lat, p.lng, null, true); });
   } else fmarker.setLatLng(ll);
   if (fcircle) { fcircle.remove(); fcircle = null; }
-  if (S.acc) fcircle = L.circle(ll, { radius: S.acc, color: '#22e3ff', weight: 1, fillOpacity: 0.12 }).addTo(fmap);
+  if (S.acc) fcircle = L.circle(ll, { radius: S.acc, color: '#0a84ff', weight: 1, fillColor: '#0a84ff', fillOpacity: 0.14 }).addTo(fmap);
   if (pan !== false) fmap.setView(ll, Math.max(fmap.getZoom(), 17));
   const info = $('#loc-info');
   if (info) {
     info.className = 'loc-info';
-    info.textContent = `📍 ${S.lat.toFixed(6)}, ${S.lng.toFixed(6)}` + (S.acc ? `　精度約 ±${Math.round(S.acc)} 米` : '　（手動調整）') + '　大頭針可拖曳修正';
+    info.textContent = `${S.lat.toFixed(6)}, ${S.lng.toFixed(6)}` + (S.acc ? `　精度約 ±${Math.round(S.acc)} 米` : '　（手動調整）') + '　大頭針可拖曳修正';
   }
   updateGmapBtn();
 }
@@ -282,8 +287,8 @@ async function addPhotos(e) {
 function renderPhotos() {
   const g = $('#photo-grid');
   if (!g) return;
-  const kept = S.keepPhotos.map((id, i) => `<div class="ph" data-keep="${esc(id)}"><button data-rk="${i}" aria-label="刪除">✕</button></div>`);
-  const fresh = S.photos.map((src, i) => `<div class="ph" style="background-image:url('${src}')"><button data-rn="${i}" aria-label="刪除">✕</button></div>`);
+  const kept = S.keepPhotos.map((id, i) => `<div class="ph" data-keep="${esc(id)}"><button data-rk="${i}" aria-label="刪除">${ICON.close({ size: 14 })}</button></div>`);
+  const fresh = S.photos.map((src, i) => `<div class="ph" style="background-image:url('${src}')"><button data-rn="${i}" aria-label="刪除">${ICON.close({ size: 14 })}</button></div>`);
   g.innerHTML = kept.concat(fresh).join('');
   $$('[data-keep]', g).forEach(async el => {
     try { el.style.backgroundImage = `url("${await photoUrl(el.dataset.keep)}")`; } catch (e) { /* 留空 */ }
@@ -304,25 +309,25 @@ function validate1() {
 // 步驟 2：作業類型
 const ARC_SVG = `
 <svg class="arc-svg" viewBox="0 0 360 230" role="img" aria-label="弧長量法示意圖：從滴水處往下 0.3 米跨過頂部到另一側">
-  <line x1="20" y1="175" x2="340" y2="175" stroke="#4a5d80" stroke-width="2"/>
-  <path d="M60 175 L60 92 Q180 -8 300 92 L300 175 Z" fill="rgba(34,227,255,.06)" stroke="none"/>
-  <line x1="60" y1="114" x2="60" y2="175" stroke="#8a97b0" stroke-width="4" stroke-dasharray="6 5"/>
-  <line x1="300" y1="114" x2="300" y2="175" stroke="#8a97b0" stroke-width="4" stroke-dasharray="6 5"/>
-  <path d="M60 114 L60 92 Q180 -8 300 92 L300 114" fill="none" stroke="#ff4d5e" stroke-width="5"/>
-  <line x1="48" y1="92" x2="72" y2="92" stroke="#ffd166" stroke-width="2"/>
-  <line x1="288" y1="92" x2="312" y2="92" stroke="#ffd166" stroke-width="2"/>
-  <line x1="50" y1="114" x2="70" y2="114" stroke="#ff4d5e" stroke-width="2"/>
-  <line x1="290" y1="114" x2="310" y2="114" stroke="#ff4d5e" stroke-width="2"/>
-  <text x="44" y="96" fill="#ffd166" font-size="11" text-anchor="end">滴水處</text>
-  <text x="44" y="118" fill="#ff8a95" font-size="11" text-anchor="end">下0.3米</text>
-  <text x="316" y="96" fill="#ffd166" font-size="11">滴水處</text>
-  <text x="316" y="118" fill="#ff8a95" font-size="11">下0.3米</text>
-  <text x="180" y="78" fill="#ff4d5e" font-size="18" font-weight="700" text-anchor="middle">弧長＝紅線全長</text>
-  <text x="180" y="100" fill="#ff8a95" font-size="11" text-anchor="middle">滴水處下0.3米 → 跨過頂部 → 另一側</text>
-  <text x="180" y="146" fill="#8a97b0" font-size="12" text-anchor="middle">灰色虛線＝捲揚範圍（不算）</text>
-  <line x1="60" y1="195" x2="300" y2="195" stroke="#22e3ff" stroke-width="2"/>
-  <path d="M60 195 l10 -6 v12 z M300 195 l-10 -6 v12 z" fill="#22e3ff"/>
-  <text x="180" y="219" fill="#22e3ff" font-size="14" text-anchor="middle">寬度（不是這個）</text>
+  <line x1="20" y1="175" x2="340" y2="175" stroke="#636366" stroke-width="2"/>
+  <path d="M60 175 L60 92 Q180 -8 300 92 L300 175 Z" fill="rgba(10,132,255,.08)" stroke="none"/>
+  <line x1="60" y1="114" x2="60" y2="175" stroke="#8e8e93" stroke-width="4" stroke-dasharray="6 5"/>
+  <line x1="300" y1="114" x2="300" y2="175" stroke="#8e8e93" stroke-width="4" stroke-dasharray="6 5"/>
+  <path d="M60 114 L60 92 Q180 -8 300 92 L300 114" fill="none" stroke="#ff453a" stroke-width="5"/>
+  <line x1="48" y1="92" x2="72" y2="92" stroke="#ffd60a" stroke-width="2"/>
+  <line x1="288" y1="92" x2="312" y2="92" stroke="#ffd60a" stroke-width="2"/>
+  <line x1="50" y1="114" x2="70" y2="114" stroke="#ff453a" stroke-width="2"/>
+  <line x1="290" y1="114" x2="310" y2="114" stroke="#ff453a" stroke-width="2"/>
+  <text x="44" y="96" fill="#ffd60a" font-size="11" text-anchor="end">滴水處</text>
+  <text x="44" y="118" fill="#ff8a80" font-size="11" text-anchor="end">下0.3米</text>
+  <text x="316" y="96" fill="#ffd60a" font-size="11">滴水處</text>
+  <text x="316" y="118" fill="#ff8a80" font-size="11">下0.3米</text>
+  <text x="180" y="78" fill="#ff453a" font-size="18" font-weight="700" text-anchor="middle">弧長＝紅線全長</text>
+  <text x="180" y="100" fill="#ff8a80" font-size="11" text-anchor="middle">滴水處下0.3米 → 跨過頂部 → 另一側</text>
+  <text x="180" y="146" fill="#8e8e93" font-size="12" text-anchor="middle">灰色虛線＝捲揚範圍（不算）</text>
+  <line x1="60" y1="195" x2="300" y2="195" stroke="#64d2ff" stroke-width="2"/>
+  <path d="M60 195 l10 -6 v12 z M300 195 l-10 -6 v12 z" fill="#64d2ff"/>
+  <text x="180" y="219" fill="#64d2ff" font-size="14" text-anchor="middle">寬度（不是這個）</text>
 </svg>`;
 
 function unitInput(id, val, ph = '') {
@@ -332,10 +337,10 @@ function unitInput(id, val, ph = '') {
 function renderStep2(body) {
   const r = S.repair;
   body.innerHTML = `
-    <div class="sec-title">步驟 2　作業類型 <small>單位一律：米</small></div>
+    <div class="sec-title">作業類型<small>步驟 2／3・單位一律：米</small></div>
     <div class="big-choice">
-      <button class="btn ${S.workType === 'new' ? 'on' : ''}" data-wt="new">🏗 新建<small>蓋新溫室</small></button>
-      <button class="btn ${S.workType === 'repair' ? 'on' : ''}" data-wt="repair">🔧 維修<small>現有溫室</small></button>
+      <button class="btn ${S.workType === 'new' ? 'on' : ''}" data-wt="new">新建<small>蓋新溫室</small></button>
+      <button class="btn ${S.workType === 'repair' ? 'on' : ''}" data-wt="repair">維修<small>現有溫室</small></button>
     </div>
     <div id="wt-body"></div>
     ${errBox()}`;
@@ -360,10 +365,10 @@ function renderNew(box) {
   box.innerHTML = `
     <div class="lbl">溫室尺寸（每一種尺寸一列）</div>
     <div id="dim-rows"></div>
-    <button class="btn block" id="add-row">＋ 再新增一種尺寸</button>
+    <button class="btn block" id="add-row">${ICON.plus({ size: 18 })}再新增一種尺寸</button>
     <div class="total" id="total"></div>
     <div class="lbl" style="margin-top:18px">四周材料（選填）</div>
-    <div class="muted" style="font-size:14px;margin-bottom:6px">通常兩層：網在內（固定）＋膜在外。再按一次可取消</div>
+    <div class="foot-note">通常兩層：網在內（固定）＋膜在外。再按一次可取消。</div>
     <div class="lbl">網（內層，單選）</div>
     <div class="radio-row">${Object.entries(NET_OPTS).map(([k, v]) => optBtn('net', k, v, S.materials.net === k)).join('')}</div>
     <div class="lbl" style="margin-top:10px">膜（外層，單選）</div>
@@ -399,7 +404,7 @@ function renderNew(box) {
         <div><div class="lbl">長度(米)</div><input type="number" inputmode="decimal" step="any" min="0" data-k="length" value="${esc(b.length)}"></div>
         <div><div class="lbl">寬度(米)</div><input type="number" inputmode="decimal" step="any" min="0" data-k="width" value="${esc(b.width)}"></div>
         <div><div class="lbl">棟數</div><input type="number" inputmode="numeric" step="1" min="1" data-k="count" value="${esc(b.count)}"></div>
-        <button class="del" aria-label="刪除這列" ${S.buildings.length === 1 ? 'disabled style="opacity:.3"' : ''}>✕</button>
+        <button class="del" aria-label="刪除這列" ${S.buildings.length === 1 ? 'disabled style="opacity:.3"' : ''}>${ICON.trash({ size: 20 })}</button>
       </div>`).join('');
     $$('.dim-row', rows).forEach(row => {
       const i = +row.dataset.i;
@@ -554,10 +559,10 @@ function renderStep3(body) {
   const r = c.repair || {};
   const area = totalArea(c.buildings);
   body.innerHTML = `
-    <div class="sec-title">步驟 3　確認與送出</div>
+    <div class="sec-title">確認與送出<small>步驟 3／3</small></div>
     <div class="field"><label>備註</label><textarea id="f-notes" placeholder="現場狀況、客戶需求…">${esc(S.notes)}</textarea></div>
     <div class="summary">
-      <h3>◆ 案件摘要</h3>
+      <h3>案件摘要</h3>
       <dl class="kv">
         <dt>客戶</dt><dd>${esc(c.customerName)}</dd>
         <dt>電話</dt><dd>${esc(c.phone)}</dd>
@@ -584,6 +589,7 @@ export function next() {
   if (err) return showErr(err);
   if (S.step < STEPS) {
     sfx.confirm();
+    stepDir = 'push';
     S.step++;
     history.pushState({ v: 'form', step: S.step }, '');
     saveDraft();
@@ -620,7 +626,7 @@ async function submit() {
       } catch (qe) { e = qe; }
     }
     submitting = false;
-    btn.disabled = false; btn.textContent = isEdit ? '儲存修改 ✔' : '送出 ✔';
+    btn.disabled = false; btn.textContent = isEdit ? '儲存修改' : '送出';
     showErr((e.network ? '沒有訊號，修改沒送出，請有訊號再按一次' : '送出失敗：') + (e.network ? '' : e.message));
   }
 }

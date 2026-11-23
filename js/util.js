@@ -1,14 +1,18 @@
 // 共用小工具
+// 底圖：OSM 標準圖磚＋CSS 濾鏡做成深色（CARTO dark_all 現在要金鑰，會出現「API KEY REQUIRED」浮水印）
+export const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+export const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+export const TILE_OPTS = { maxZoom: 19, attribution: TILE_ATTR, className: 'dark-tiles' };
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
 export const PING_M2 = 3.3058; // 1 坪 = 3.3058 ㎡
 
 export const STATUS = {
-  survey:   { label: '場勘／報價中', short: '場勘報價', emoji: '🟡', color: '#ffd43b' },
-  building: { label: '施工中',       short: '施工中',   emoji: '🔵', color: '#3b9dff' },
-  done:     { label: '完工',         short: '完工',     emoji: '🟢', color: '#3ddc84' },
-  dropped:  { label: '放棄',         short: '放棄',     emoji: '⚪', color: '#c8ced8' },
+  survey:   { label: '場勘／報價中', short: '場勘報價', emoji: '🟡', color: '#ffd60a' },
+  building: { label: '施工中',       short: '施工中',   emoji: '🔵', color: '#0a84ff' },
+  done:     { label: '完工',         short: '完工',     emoji: '🟢', color: '#30d158' },
+  dropped:  { label: '放棄',         short: '放棄',     emoji: '⚪', color: '#8e8e93' },
 };
 export const STATUS_KEYS = Object.keys(STATUS);
 export const STALE_DAYS = 7;

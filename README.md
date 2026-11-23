@@ -140,14 +140,15 @@
 
 ```
 index.html          畫面骨架
-css/style.css       深色科技風樣式
+css/style.css       Apple 深色模式樣式（iOS 系統色、毛玻璃、segmented control）
 js/config.js        LIFF ID、後端網址（非機密）
 js/app.js           進入點、畫面切換、離線佇列
 js/api.js           LIFF 登入、呼叫後端、佇列、測試模式
 js/mapview.js       地圖、篩選、列表、案件卡片
 js/form.js          三步驟引導表單
 js/greenhouse3d.js  案件卡片的溫室 3D 爆炸圖（Three.js，CDN）
-js/sound.js         Web Audio 合成音效
+js/sound.js         Web Audio 合成的 Apple 風輕柔音效＋輕觸覺
+js/icons.js         線條圖示（SVG）
 js/util.js          共用工具
 apps-script/        後端程式（貼到 script.google.com）
 ```

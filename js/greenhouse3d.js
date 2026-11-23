@@ -94,7 +94,7 @@ export function mountGreenhouse(box, c) {
   const d = describe(c);
   box.innerHTML = `
     <div class="gh3d">
-      <div class="gh3d-head"><b>◆ 3D 爆炸圖</b><span class="muted">${esc(d.note)}</span></div>
+      <div class="gh3d-head"><b>3D 爆炸圖</b><span class="muted">${esc(d.note)}</span></div>
       <div class="gh3d-stage">
         <div class="gh3d-msg">3D 載入中…</div>
         <div class="gh3d-labels"></div>
@@ -168,7 +168,7 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.88;
+  renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const canvas = renderer.domElement;
@@ -185,12 +185,12 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
   keep(envRT); pmrem.dispose();
   scene.environment = envRT.texture;              // 金屬反光靠環境貼圖
   const span = Math.max(W, L);
-  scene.fog = new THREE.Fog(0xe9ecef, span * 2.2, span * 6);   // 遠處淡出，有景深感
+  scene.fog = new THREE.Fog(0x1a1a1c, span * 2.4, span * 6.5);   // 遠處淡入深灰背景，有景深感
 
   const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 2000);
 
   // 打光：環境光＋柔和主光（投影）＋補光
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xc9cfd6, 0.4));
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3a3e, 0.55));
   const key = new THREE.DirectionalLight(0xffffff, 1.6);
   key.position.set(W * 0.9 + 6, H + rise + span * 0.9, L * 0.5 + 4);
   key.castShadow = true;
@@ -202,9 +202,12 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
   const fill = new THREE.DirectionalLight(0xe8f0ff, 0.45);
   fill.position.set(-W - 6, H + 4, -L * 0.4);
   scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.7);   // 背光勾邊，深色背景上輪廓才清楚
+  rim.position.set(-W * 0.5, H + rise + 6, -L - 8);
+  scene.add(rim);
 
   // 地面：只接陰影（背景是 CSS 淺灰漸層）
-  const ground = new THREE.Mesh(keep(new THREE.PlaneGeometry(span * 8, span * 8)), keep(new THREE.ShadowMaterial({ opacity: 0.16 })));
+  const ground = new THREE.Mesh(keep(new THREE.PlaneGeometry(span * 8, span * 8)), keep(new THREE.ShadowMaterial({ opacity: 0.38 })));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
   scene.add(ground);
 
@@ -329,7 +332,7 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
     return mesh;
   }
   // 面板加細邊線，零件輪廓才看得清楚（像產品爆炸圖）
-  const edgeMat = keep(new THREE.LineBasicMaterial({ color: 0x6f7c88, transparent: true, opacity: isRepair ? 0.35 : 0.8 }));
+  const edgeMat = keep(new THREE.LineBasicMaterial({ color: 0xa3acb6, transparent: true, opacity: isRepair ? 0.35 : 0.8 }));
   const edgeHot = keep(new THREE.LineBasicMaterial({ color: 0xff7a00 }));
   function outline(mesh, isHot) {
     const eg = keep(new THREE.EdgesGeometry(mesh.geometry, 25));
@@ -542,7 +545,7 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
   const gPos = new Float32Array(guideParts.length * 6);
   const gGeo = keep(new THREE.BufferGeometry());
   gGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3));
-  const gMat = keep(new THREE.LineDashedMaterial({ color: 0x6b7480, dashSize: 0.18, gapSize: 0.12, transparent: true, opacity: 0.7 }));
+  const gMat = keep(new THREE.LineDashedMaterial({ color: 0xaeaeb2, dashSize: 0.18, gapSize: 0.12, transparent: true, opacity: 0.7 }));
   const guides = new THREE.LineSegments(gGeo, gMat);
   guides.frustumCulled = false;
   scene.add(guides);

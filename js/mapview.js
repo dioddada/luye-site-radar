@@ -1,6 +1,7 @@
 // 雷達主畫面：地圖、篩選、列表、底部案件卡片
 import { $, $$, esc, store, toast, fmt, STATUS, STATUS_KEYS, isStale, daysSince, fmtDate,
-  workSummary, buildingsText, totalArea, PING_M2, navUrl, materialsText, winchSideOf } from './util.js';
+  workSummary, buildingsText, totalArea, PING_M2, navUrl, materialsText, winchSideOf, TILE_URL, TILE_OPTS } from './util.js';
+import { ICON } from './icons.js';
 import { mountGreenhouse } from './greenhouse3d.js';
 import { sfx } from './sound.js';
 import { call } from './api.js';
@@ -24,14 +25,14 @@ export function initMap(user, h) {
   hooks = { ...hooks, ...h };
   map = L.map('map', { zoomControl: true, attributionControl: true }).setView(LUYE, 13);
   map.zoomControl.setPosition('bottomright');
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '&copy; OpenStreetMap',
-  }).addTo(map);
+  L.tileLayer(TILE_URL, TILE_OPTS).addTo(map);
   layer = L.layerGroup().addTo(map);
 
   $('#btn-mylocation').onclick = locateMe;
   $('#btn-toggle-list').onclick = () => { sfx.beep(); setList(!listMode); };
   $('#sheet-backdrop').onclick = () => { sfx.back(); closeSheet(); };
+  setList(false);
+  bindSheetDrag();
   renderFilters();
 }
 
@@ -51,7 +52,7 @@ function locateMe() {
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
     if (!meLayer) meLayer = L.layerGroup().addTo(map);
     meLayer.clearLayers();
-    L.circle([lat, lng], { radius: accuracy, color: '#3b9dff', weight: 1, fillColor: '#3b9dff', fillOpacity: .12, interactive: false }).addTo(meLayer);
+    L.circle([lat, lng], { radius: accuracy, color: '#0a84ff', weight: 1, fillColor: '#0a84ff', fillOpacity: .14, interactive: false }).addTo(meLayer);
     L.marker([lat, lng], { icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me-dot"></div>' }),
       interactive: false, keyboard: false, zIndexOffset: -100 }).addTo(meLayer);
     if (listMode) setList(false);
@@ -108,7 +109,7 @@ function renderMarkers() {
   visible().forEach(c => {
     if (!c.lat || !c.lng) return;
     const icon = L.divIcon({
-      className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+      className: '', iconSize: [26, 26], iconAnchor: [13, 13],
       html: `<div class="pin ${c.status} ${isStale(c) ? 'stale' : ''}"></div>`,
     });
     L.marker([c.lat, c.lng], { icon, title: c.customerName })
@@ -120,7 +121,7 @@ function renderMarkers() {
 function setList(on) {
   listMode = on;
   $('#list').classList.toggle('hidden', !on);
-  $('#btn-toggle-list').textContent = on ? '🗺 地圖' : '☰ 列表';
+  $('#btn-toggle-list').innerHTML = on ? ICON.map({ size: 18 }) + '地圖' : ICON.list({ size: 18 }) + '列表';
   if (!on) invalidate();
 }
 
@@ -131,16 +132,17 @@ function renderList() {
     (new Date(b.statusUpdatedAt) - new Date(a.statusUpdatedAt)));
   const box = $('#list');
   if (!list.length) { box.innerHTML = '<p class="muted" style="text-align:center;margin-top:40px">沒有符合篩選的案件</p>'; return; }
-  box.innerHTML = list.map(c => `
-    <div class="row-item" data-id="${esc(c.caseId)}" style="border-left-color:${STATUS[c.status].color}">
+  box.innerHTML = '<div class="group">' + list.map(c => `
+    <div class="row-item" data-id="${esc(c.caseId)}">
+      <span class="sdot" style="background:${STATUS[c.status].color}"></span>
       <div class="grow">
-        <div class="t">${esc(c.customerName)} <span class="status-tag" style="background:${STATUS[c.status].color}">${STATUS[c.status].short}</span></div>
+        <div class="t">${esc(c.customerName)} <span class="status-tag">${STATUS[c.status].short}</span></div>
         <div class="s">${esc(workSummary(c))}</div>
         <div class="s">${esc(c.address || '')}</div>
-        ${isStale(c) ? `<div class="stale-tag">⚠ ${daysSince(c.statusUpdatedAt)} 天沒更新</div>` : ''}
+        ${isStale(c) ? `<div class="stale-tag">${ICON.warn({ size: 14 })} ${daysSince(c.statusUpdatedAt)} 天沒更新</div>` : ''}
       </div>
-      <div class="muted">›</div>
-    </div>`).join('');
+      <span class="chev">${ICON.chevron({ size: 16 })}</span>
+    </div>`).join('') + '</div>';
   $$('.row-item', box).forEach(el => el.onclick = () => {
     sfx.pop();
     const c = cases.find(x => x.caseId === el.dataset.id);
@@ -195,17 +197,17 @@ function renderSheet(c) {
 
   killGh();
   $('#sheet-body').innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+    <div class="sheet-head">
       <div>
-        <h2 style="margin:0">${esc(c.customerName)}</h2>
-        <span class="status-tag" style="background:${st.color}">${st.emoji} ${st.label}</span>
-        ${isStale(c) ? `<span class="stale-tag" style="color:var(--red);font-weight:700;margin-left:6px">⚠ ${daysSince(c.statusUpdatedAt)} 天沒更新</span>` : ''}
+        <h2>${esc(c.customerName)}</h2>
+        <span class="status-tag"><i style="background:${st.color}"></i>${st.label}</span>
+        ${isStale(c) ? `<span class="stale-tag" style="margin-left:6px">${ICON.warn({ size: 14 })} ${daysSince(c.statusUpdatedAt)} 天沒更新</span>` : ''}
       </div>
-      <button class="icon-btn" id="sheet-close" aria-label="關閉">✕</button>
+      <button class="icon-btn round-btn" id="sheet-close" aria-label="關閉">${ICON.close({ size: 14 })}</button>
     </div>
-    <div class="btn-row" style="margin-top:12px">
-      <a class="btn primary" style="display:flex;align-items:center;justify-content:center;text-decoration:none" href="${navUrl(c.lat, c.lng)}" target="_blank" rel="noopener">🧭 導航</a>
-      <a class="btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none" href="tel:${esc(String(c.phone).replace(/[^\d+]/g, ''))}">📞 撥打電話</a>
+    <div class="btn-row" style="margin-top:14px">
+      <a class="btn primary" href="${navUrl(c.lat, c.lng)}" target="_blank" rel="noopener">${ICON.nav({ size: 18 })}導航</a>
+      <a class="btn" href="tel:${esc(String(c.phone).replace(/[^\d+]/g, ''))}">${ICON.phone({ size: 18 })}撥打電話</a>
     </div>
     <dl class="kv">
       <dt>電話</dt><dd>${esc(c.phone)}</dd>
@@ -222,7 +224,7 @@ function renderSheet(c) {
     <div id="gh3d-box"></div>
     <div class="lbl">照片（${(c.photos || []).length}）</div>
     <div class="photos">${(c.photos || []).map(id => `<div class="ph" data-photo="${esc(id)}">載入中…</div>`).join('') || '<span class="muted">沒有照片</span>'}</div>
-    ${canEdit(c) ? `<button class="btn block" id="sheet-edit">✎ 修改案件資料</button>` : ''}
+    ${canEdit(c) ? `<button class="btn block" id="sheet-edit">${ICON.pencil({ size: 18 })}修改案件資料</button>` : ''}
     ${isAdmin ? adminBox(c) : ''}
   `;
   $('#sheet-close').onclick = () => { sfx.back(); closeSheet(); };
@@ -238,10 +240,10 @@ function adminBox(c) {
   const ownerExtra = c.owner && !users.some(u => u.name === c.owner) ? `<option selected>${esc(c.owner)}</option>` : '';
   return `
     <div class="admin-box">
-      <h3>◆ 管理員</h3>
+      <h3>管理員</h3>
       <div class="lbl">狀態</div>
       <div class="seg" id="adm-status">
-        ${STATUS_KEYS.map(k => `<button class="btn ${c.status === k ? 'on' : ''}" data-k="${k}" style="border-left:5px solid ${STATUS[k].color}">${STATUS[k].short}</button>`).join('')}
+        ${STATUS_KEYS.map(k => `<button class="btn ${c.status === k ? 'on' : ''}" data-k="${k}"><span class="sdot" style="background:${STATUS[k].color}"></span>${STATUS[k].short}</button>`).join('')}
       </div>
       <div class="field"><label>下一步</label><input type="text" id="adm-next" value="${esc(c.nextAction)}" placeholder="例如：週五前送報價"></div>
       <div class="two">
@@ -313,4 +315,34 @@ function showLightbox(url) {
   lb.innerHTML = `<img src="${url}" alt="照片">`;
   lb.onclick = () => lb.remove();
   document.body.appendChild(lb);
+}
+
+// ───────── 底部卡片：拖曳 grabber／在頂端往下滑就關閉 ─────────
+function bindSheetDrag() {
+  const sheet = $('#sheet');
+  let y0 = 0, dy = 0, dragging = false, startedOnGrip = false;
+  sheet.addEventListener('touchstart', e => {
+    if (!sheet.classList.contains('open')) return;
+    if (e.target.closest('.gh3d-stage, input, select, textarea, .photos')) return;   // 3D 要拿來轉，不搶
+    startedOnGrip = !!e.target.closest('.grip, .sheet-head');
+    if (!startedOnGrip && sheet.scrollTop > 0) return;
+    y0 = e.touches[0].clientY; dy = 0; dragging = true;
+  }, { passive: true });
+  sheet.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy <= 0 || (!startedOnGrip && sheet.scrollTop > 0)) { if (dy < 0) { dragging = false; sheet.classList.remove('dragging'); sheet.style.transform = ''; } return; }
+    sheet.classList.add('dragging');
+    sheet.style.transform = `translateY(${dy}px)`;
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.classList.remove('dragging');
+    sheet.style.transform = '';
+    if (dy > 110) { sfx.back(); closeSheet(); }
+  };
+  sheet.addEventListener('touchend', end);
+  sheet.addEventListener('touchcancel', end);
 }
