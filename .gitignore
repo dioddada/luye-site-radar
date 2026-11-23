@@ -4,3 +4,4 @@ node_modules/
 .clasprc.json
 *.local.*
 .playwright-mcp/
+.shots/

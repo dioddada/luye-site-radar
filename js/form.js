@@ -297,14 +297,26 @@ function validate1() {
 
 // 步驟 2：作業類型
 const ARC_SVG = `
-<svg class="arc-svg" viewBox="0 0 360 200" role="img" aria-label="弧長與寬度示意圖">
-  <line x1="20" y1="160" x2="340" y2="160" stroke="#4a5d80" stroke-width="2"/>
-  <path d="M60 160 L60 110 Q180 10 300 110 L300 160" fill="rgba(34,227,255,.06)" stroke="#ff4d5e" stroke-width="5"/>
-  <text x="180" y="112" fill="#ff4d5e" font-size="18" font-weight="700" text-anchor="middle">弧長＝紅線全長</text>
-  <text x="180" y="134" fill="#ff8a95" font-size="12" text-anchor="middle">（一側地面 → 跨過頂部 → 另一側地面）</text>
-  <line x1="60" y1="180" x2="300" y2="180" stroke="#22e3ff" stroke-width="2"/>
-  <path d="M60 180 l10 -6 v12 z M300 180 l-10 -6 v12 z" fill="#22e3ff"/>
-  <text x="180" y="196" fill="#22e3ff" font-size="14" text-anchor="middle">寬度（不是這個）</text>
+<svg class="arc-svg" viewBox="0 0 360 230" role="img" aria-label="弧長量法示意圖：從滴水處往下 0.3 米跨過頂部到另一側">
+  <line x1="20" y1="175" x2="340" y2="175" stroke="#4a5d80" stroke-width="2"/>
+  <path d="M60 175 L60 92 Q180 -8 300 92 L300 175 Z" fill="rgba(34,227,255,.06)" stroke="none"/>
+  <line x1="60" y1="114" x2="60" y2="175" stroke="#8a97b0" stroke-width="4" stroke-dasharray="6 5"/>
+  <line x1="300" y1="114" x2="300" y2="175" stroke="#8a97b0" stroke-width="4" stroke-dasharray="6 5"/>
+  <path d="M60 114 L60 92 Q180 -8 300 92 L300 114" fill="none" stroke="#ff4d5e" stroke-width="5"/>
+  <line x1="48" y1="92" x2="72" y2="92" stroke="#ffd166" stroke-width="2"/>
+  <line x1="288" y1="92" x2="312" y2="92" stroke="#ffd166" stroke-width="2"/>
+  <line x1="50" y1="114" x2="70" y2="114" stroke="#ff4d5e" stroke-width="2"/>
+  <line x1="290" y1="114" x2="310" y2="114" stroke="#ff4d5e" stroke-width="2"/>
+  <text x="44" y="96" fill="#ffd166" font-size="11" text-anchor="end">滴水處</text>
+  <text x="44" y="118" fill="#ff8a95" font-size="11" text-anchor="end">下0.3米</text>
+  <text x="316" y="96" fill="#ffd166" font-size="11">滴水處</text>
+  <text x="316" y="118" fill="#ff8a95" font-size="11">下0.3米</text>
+  <text x="180" y="78" fill="#ff4d5e" font-size="18" font-weight="700" text-anchor="middle">弧長＝紅線全長</text>
+  <text x="180" y="100" fill="#ff8a95" font-size="11" text-anchor="middle">滴水處下0.3米 → 跨過頂部 → 另一側</text>
+  <text x="180" y="146" fill="#8a97b0" font-size="12" text-anchor="middle">灰色虛線＝捲揚範圍（不算）</text>
+  <line x1="60" y1="195" x2="300" y2="195" stroke="#22e3ff" stroke-width="2"/>
+  <path d="M60 195 l10 -6 v12 z M300 195 l-10 -6 v12 z" fill="#22e3ff"/>
+  <text x="180" y="219" fill="#22e3ff" font-size="14" text-anchor="middle">寬度（不是這個）</text>
 </svg>`;
 
 function unitInput(id, val, ph = '') {
@@ -382,7 +394,7 @@ function renderRepair(box) {
     <div class="sub ${r.film.on ? '' : 'hidden'}" id="sub-film">
       <div class="field">
         <label>弧長（米）</label>
-        <div class="warn-red">請填弧長（膜從一側地面跨過頂部到另一側地面的長度），不是溫室寬度</div>
+        <div class="warn-red">請填弧長：從一側滴水處往下 0.3 米（30 公分），跨過頂部量到另一側同樣位置。不是溫室寬度；滴水處以下屬於「更換捲揚」</div>
         ${ARC_SVG}
         ${unitInput('film-arc', r.film.arc)}
       </div>
