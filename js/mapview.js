@@ -26,9 +26,38 @@ export function initMap(user, h) {
   }).addTo(map);
   layer = L.layerGroup().addTo(map);
 
+  $('#btn-locate').onclick = locateMe;
   $('#btn-toggle-list').onclick = () => { sfx.beep(); setList(!listMode); };
   $('#sheet-backdrop').onclick = () => { sfx.back(); closeSheet(); };
   renderFilters();
+}
+
+// ───────── 回到我的位置 ─────────
+let meLayer = null;
+let locating = false;
+function locateMe() {
+  sfx.beep();
+  if (locating) return;
+  const btn = $('#btn-locate');
+  if (!navigator.geolocation) { toast('這台裝置不支援定位', true); return; }
+  locating = true;
+  btn.classList.add('busy');
+  const done = () => { locating = false; btn.classList.remove('busy'); };
+  navigator.geolocation.getCurrentPosition(pos => {
+    done();
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    if (!meLayer) meLayer = L.layerGroup().addTo(map);
+    meLayer.clearLayers();
+    L.circle([lat, lng], { radius: accuracy, color: '#3b9dff', weight: 1, fillColor: '#3b9dff', fillOpacity: .12, interactive: false }).addTo(meLayer);
+    L.marker([lat, lng], { icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me-dot"></div>' }),
+      interactive: false, keyboard: false, zIndexOffset: -100 }).addTo(meLayer);
+    if (listMode) setList(false);
+    map.flyTo([lat, lng], Math.max(16, Math.min(map.getZoom(), 18)), { duration: .8 });
+    if (accuracy > 200) toast(`定位誤差約 ${Math.round(accuracy)} 米，位置可能不準`);
+  }, err => {
+    done();
+    toast(err.code === 1 ? '沒有定位權限，請到設定允許定位' : err.code === 3 ? '定位逾時，請到空曠處再試' : '抓不到位置，請稍後再試', true);
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
 }
 
 export function invalidate() { if (map) setTimeout(() => map.invalidateSize(), 50); }
