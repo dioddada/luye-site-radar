@@ -193,7 +193,8 @@ function renderSheet(c) {
     <dt>尺寸</dt><dd>${buildingsText(c.buildings) || '—'}</dd>
     <dt>總面積</dt><dd>${fmt(area)} ㎡（${fmt(area / PING_M2)} 坪）</dd>
     <dt>四周材料</dt><dd>${materialsText(c.materials, 'side') || '—'}</dd>
-    <dt>屋頂材料</dt><dd>${materialsText(c.materials, 'roof') || '—'}</dd>`;
+    <dt>屋頂材料</dt><dd>${materialsText(c.materials, 'roof') || '—'}</dd>
+    <dt>門</dt><dd>${materialsText(c.materials, 'door')}</dd>`;
 
   killGh();
   $('#sheet-body').innerHTML = `

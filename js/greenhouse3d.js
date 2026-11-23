@@ -3,7 +3,7 @@
 // 結構尺寸照鹿野報價引擎（00_報價引擎/specs/drawing-sketchup.md，Oscar 提供）：
 //   滴水高＝立柱 2.0＋(腳長−插入 0.10)，拱頂是真圓弧，拱距 0.75，固定壓板（S 線）位置、門 1.2×2.0。
 // Three.js 用 CDN（index.html 的 importmap），打開卡片才載入；載不到或不支援 WebGL 就退回文字清單。
-import { esc, fmt, num, normMaterials, NET_OPTS, ROOF_MATS, winchSideOf } from './util.js';
+import { esc, fmt, num, normMaterials, NET_OPTS, ROOF_MATS, DOOR_OPTS, winchSideOf } from './util.js';
 import { sfx } from './sound.js';
 
 const POST_H = 2.0;      // 立柱高（常見）
@@ -84,9 +84,14 @@ export function describe(c) {
   const items = [];
   m.roof.forEach(k => items.push({ key: k, label: '屋頂 ' + ROOF_MATS[k], color: C[k] }));
   if (m.net && m.net !== 'none') items.push({ key: m.net, label: '四周 ' + NET_OPTS[m.net] + '（內）', color: C[m.net] });
-  if (m.film === 'fixed') items.push({ key: 'film', label: '四周 農膜（外，固定）', color: C.film });
-  if (m.film === 'winch') items.push({ key: 'winch', label: `捲揚（${m.winchSide}）`, color: C.winchFilm });
-  return { mode: 'new', W, L, note, g, m, items, empty: !m.roof.length && !m.net && !m.film };
+  const filmItem = (v, where) => {
+    if (v === 'fixed') items.push({ key: 'film', label: `${where} 農膜（外，固定）`, color: C.film });
+    if (v === 'winch') items.push({ key: 'winch', label: `${where} 捲揚`, color: C.winchFilm });
+  };
+  filmItem(m.sideFilm, '兩側');
+  filmItem(m.endFilm, '前後');
+  if (m.door !== 'none') items.push({ key: 'door', label: '門：' + DOOR_OPTS[m.door], color: C.door });
+  return { mode: 'new', W, L, note, g, m, items, empty: !m.roof.length && !m.net && !m.sideFilm && !m.endFilm };
 }
 
 // ───────── 掛到卡片上 ─────────
@@ -279,13 +284,13 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
     return [[a[0][0], H - FILM_DROP], ...a, [a[a.length - 1][0], H - FILM_DROP]];
   };
   // 端面外形（地面 → 牆 → 拱）
-  function endShape(withDoor) {
+  function endShape(dr) {
     const sh = new THREE.Shape();
     sh.moveTo(-W / 2, 0); sh.lineTo(W / 2, 0);
     arcPts(0).slice().reverse().forEach(p => sh.lineTo(p[0], p[1]));
     sh.lineTo(-W / 2, 0);
-    if (withDoor) {
-      const [x0, x1] = doorX;
+    if (dr) {
+      const [x0, x1] = dr;
       const h = new THREE.Path();
       h.moveTo(x0, 0.1); h.lineTo(x1, 0.1); h.lineTo(x1, 2.1); h.lineTo(x0, 2.1); h.lineTo(x0, 0.1);
       sh.holes.push(h);
@@ -351,8 +356,22 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
     return mesh;
   }
 
-  // 門：前端面（+z），偏左（照報價引擎 6m 跨：門柱 1.10／2.40）
-  const doorX = W >= 4 ? [-W / 2 + 1.15, -W / 2 + 2.35] : [-0.6, 0.6];
+  // 門：照報價引擎 6m 跨，門柱在離左邊 1.10／2.40（從外面看的左邊）。
+  // 有門的端面＝doorOn；該面有做捲揚時，門靠到最左邊（捲揚膜畫在門右側到另一邊）。
+  const mm = d.m || {};
+  const hasEndWinch = isRepair ? !!hot.winchEnd : mm.endFilm === 'winch';
+  const doorOn = isRepair ? { 1: true, '-1': false }
+    : { 1: mm.door === 'front' || mm.door === 'both', '-1': mm.door === 'back' || mm.door === 'both' };
+  // sz＝1 前端（+z，從外面看左邊是 -x）；sz＝-1 後端（-z，從外面看左邊是 +x）
+  function doorRange(sz) {
+    if (!doorOn[sz]) return null;
+    const leftDir = sz > 0 ? -1 : 1;
+    const edge = leftDir * W / 2;
+    const [a, b] = W < 4 ? [W / 2 - 0.6, W / 2 + 0.6] : hasEndWinch ? [0.1, 1.3] : [1.15, 2.35];
+    const xs = [edge - leftDir * a, edge - leftDir * b].sort((p, q) => p - q);
+    return xs;
+  }
+  const DOOR = { 1: doorRange(1), '-1': doorRange(-1) };
 
   // 部件：{ obj, base, ex（爆開位移）, label, anchor（合起時標籤位置）, hot }
   const parts = [];
@@ -382,11 +401,12 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
     bar(V(sg * W / 2, 0.2, -L / 2), V(sg * W / 2, 0.2, L / 2), 0.014, steelMat, frame);           // 裙桿
   });
   // 端面：滴水高水平桿＋立柱（前面有門）
-  const endPostsX = (withDoor) => {
+  const endPostsX = (dr) => {
     const xs = [];
-    if (withDoor) {
-      xs.push(doorX[0] - 0.05, doorX[1] + 0.05);
-      for (let x = doorX[1] + 1.8; x < W / 2 - 0.6; x += 1.8) xs.push(x);
+    if (dr) {
+      xs.push(dr[0] - 0.05, dr[1] + 0.05);
+      for (let x = dr[1] + 1.8; x < W / 2 - 0.6; x += 1.8) xs.push(x);
+      for (let x = dr[0] - 1.8; x > -W / 2 + 0.6; x -= 1.8) xs.push(x);
     } else {
       const n = Math.max(1, Math.round(W / 1.5) - 1);
       for (let i = 1; i <= n; i++) xs.push(-W / 2 + (W * i) / (n + 1));
@@ -397,8 +417,9 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
   [-1, 1].forEach(sz => {
     const z = sz * L / 2;
     bar(V(-W / 2, H, z), V(W / 2, H, z), 0.016, steelMat, frame);
-    endPostsX(sz > 0).forEach(x => bar(V(x, 0, z), V(x, archYAt(x), z), 0.02, steelMat, frame));
-    if (sz > 0) bar(V(doorX[0] - 0.05, 2.12, z), V(doorX[1] + 0.05, 2.12, z), 0.02, steelMat, frame);   // 門楣
+    const dr = DOOR[sz];
+    endPostsX(dr).filter(x => Math.abs(x) < W / 2 - 0.05).forEach(x => bar(V(x, 0, z), V(x, archYAt(x), z), 0.02, steelMat, frame));
+    if (dr) bar(V(dr[0] - 0.05, 2.12, z), V(dr[1] + 0.05, 2.12, z), 0.02, steelMat, frame);   // 門楣
   });
   scene.add(frame);
 
@@ -420,9 +441,10 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
       for (let i = 0; i < edge.length - 1; i++) plateBar(edge[i], edge[i + 1], pm, grp);
       const ys = [H - 0.2, (H - 0.2 + 0.2) / 2, 0.2];
       ys.forEach(y => {
-        if (sz > 0 && y < 2.1) {   // 門洞斷開
-          plateBar(V(-W / 2, y, z), V(doorX[0], y, z), pm, grp);
-          plateBar(V(doorX[1], y, z), V(W / 2, y, z), pm, grp);
+        const dr = DOOR[sz];
+        if (dr && y < 2.1) {   // 門洞斷開
+          if (dr[0] - -W / 2 > 0.05) plateBar(V(-W / 2, y, z), V(dr[0], y, z), pm, grp);
+          if (W / 2 - dr[1] > 0.05) plateBar(V(dr[1], y, z), V(W / 2, y, z), pm, grp);
         } else plateBar(V(-W / 2, y, z), V(W / 2, y, z), pm, grp);
       });
       addPart(grp, V(0, 0, sz * 1.0 * s), '', V(0, H, z), isHot);
@@ -466,7 +488,7 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
     const off = 0.08 + layer * 0.06;
     const cell = kind.net === 'fine' ? 0.15 : kind.net ? 0.3 : 1;
     [-1, 1].forEach(sz => {
-      const g = keep(new THREE.ShapeGeometry(endShape(sz > 0), 6));
+      const g = keep(new THREE.ShapeGeometry(endShape(DOOR[sz]), 6));
       scaleUV(g, 1 / cell, 1 / cell);
       const m = outline(new THREE.Mesh(g, mat(kind, isHot)), isHot);
       m.position.set(0, 0, sz * (L / 2 + off));
@@ -491,28 +513,36 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
     });
     if (where.end) [-1, 1].forEach(sz => {
       const grp = new THREE.Group();
-      const film = outline(new THREE.Mesh(keep(new THREE.PlaneGeometry(W, y1 - y0)), fm), isHot);
-      film.position.set(0, (y0 + y1) / 2, 0); grp.add(film);
-      bar(V(-W / 2, y0, 0.03), V(W / 2 + 0.25, y0, 0.03), 0.04, tm, grp);
+      // 有門：捲揚膜從門的右側（門框外 0.1）到另一邊；沒門：整面
+      const dr = DOOR[sz];
+      let xa = -W / 2, xb = W / 2;
+      if (dr) { if (sz > 0) xa = dr[1] + 0.1; else xb = dr[0] - 0.1; }
+      const fw = xb - xa, xc = (xa + xb) / 2;
+      const film = outline(new THREE.Mesh(keep(new THREE.PlaneGeometry(fw, y1 - y0)), fm), isHot);
+      film.position.set(xc, (y0 + y1) / 2, 0); grp.add(film);
+      const far = sz > 0 ? xb : xa, dir = sz > 0 ? 1 : -1;     // 手搖器放在離門遠的那一端
+      bar(V(xa - (dir < 0 ? 0.25 : 0), y0, 0.03), V(xb + (dir > 0 ? 0.25 : 0), y0, 0.03), 0.04, tm, grp);
       const crank = new THREE.Mesh(keep(new THREE.BoxGeometry(0.14, 0.22, 0.14)), cm);
-      crank.position.set(W / 2 + 0.25, 1.0, 0.08); crank.castShadow = true; grp.add(crank);
-      bar(V(W / 2 + 0.25, y0, 0.05), V(W / 2 + 0.25, 0.9, 0.08), 0.015, tm, grp);
+      crank.position.set(far + dir * 0.25, 1.0, 0.08); crank.castShadow = true; grp.add(crank);
+      bar(V(far + dir * 0.25, y0, 0.05), V(far + dir * 0.25, 0.9, 0.08), 0.015, tm, grp);
       grp.position.set(0, 0, sz * (L / 2 + off));
-      addPart(grp, V(0, 0, sz * (2.0 + layer * 1.7) * s), sz > 0 && !where.long ? label : '', V(-W * 0.25, H * 0.5, sz * (L / 2 + off)), isHot);
+      addPart(grp, V(0, 0, sz * (2.0 + layer * 1.7) * s), sz > 0 && where.endLabel !== false ? (where.endLabel || label) : '', V(xc, H * 0.5, sz * (L / 2 + off)), isHot);
     });
   }
-  // 門片（前端面，往前飄出）
-  function doorPart() {
+  // 門片（往前／往後飄出）
+  function doorPart(sz) {
+    const dr = DOOR[sz];
+    if (!dr) return;
     const grp = new THREE.Group();
     const dm = mat(K.door, false);
-    const [x0, x1] = doorX;
+    const [x0, x1] = dr;
     [[V(x0, 0.1, 0), V(x0, 2.1, 0)], [V(x1, 0.1, 0), V(x1, 2.1, 0)], [V(x0, 0.1, 0), V(x1, 0.1, 0)], [V(x0, 2.1, 0), V(x1, 2.1, 0)], [V(x0, 1.1, 0), V(x1, 1.1, 0)]]
       .forEach(([a, b]) => bar(a, b, 0.02, dm, grp));
     const g = scaleUV(keep(new THREE.PlaneGeometry(x1 - x0, 2.0)), (x1 - x0) / 0.15, 2 / 0.15);
     const mesh = new THREE.Mesh(g, mat(K.insectNet, false));
     mesh.position.set((x0 + x1) / 2, 1.1, 0); grp.add(mesh);
-    grp.position.set(0, 0, L / 2 + 0.02);
-    addPart(grp, V(0, 0, 4.4 * s), '門 1.2×2.0米', V((x0 + x1) / 2, 2.1, L / 2), false);
+    grp.position.set(0, 0, sz * (L / 2 + 0.02));
+    addPart(grp, V(0, 0, sz * 4.4 * s), sz > 0 ? '門 1.2×2.0米' : '後門', V((x0 + x1) / 2, 2.1, sz * L / 2), false);
   }
 
   if (isRepair) {
@@ -521,21 +551,19 @@ function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
     endPanel(K.blackNet, !!hot.netEnd, 0, hot.netEnd ? '網子（前後）' : '');
     winchSet({ long: true, end: false }, !!hot.winchLong, 1, '捲揚（兩側）');
     if (hot.winchEnd) winchSet({ long: false, end: true }, true, 1, '捲揚（前後）');
-    doorPart();
+    doorPart(1);
   } else {
     const m = d.m;
     if (m.net && m.net !== 'none') {
       longPanel(K[m.net], false, 0, 0.05, H, NET_OPTS[m.net] + '（內）');
       endPanel(K[m.net], false, 0, '');
     }
-    if (m.film === 'fixed') {
-      longPanel(K.film, false, 1, 0.05, H, '農膜（外，固定）', -1);
-      endPanel(K.film, false, 1, '');
-    } else if (m.film === 'winch') {
-      const ws = m.winchSide;
-      winchSet({ long: ws === '兩側' || ws === '四周', end: ws === '前後' || ws === '四周' }, false, 1, `捲揚（${ws}）`);
-    }
-    doorPart();
+    if (m.sideFilm === 'fixed') longPanel(K.film, false, 1, 0.05, H, '兩側 農膜（固定）', -1);
+    if (m.sideFilm === 'winch') winchSet({ long: true, end: false }, false, 1, '兩側 捲揚');
+    if (m.endFilm === 'fixed') endPanel(K.film, false, 1, '前後 農膜（固定）');
+    if (m.endFilm === 'winch') winchSet({ long: false, end: true, endLabel: '前後 捲揚' }, false, 1, '前後 捲揚');
+    doorPart(1);
+    doorPart(-1);
   }
 
   parts.forEach(p => { p.base = p.obj.position.clone(); p.obj.traverse(o => { if (o.isMesh && !o.material.transparent) o.castShadow = true; }); });

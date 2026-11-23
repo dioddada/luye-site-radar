@@ -1,7 +1,7 @@
 // 引導式表單：一步一頁
 import { $, $$, esc, store, toast, fmt, num, totalArea, PING_M2, parseLatLng, needsResolve, extractUrl,
   compressImage, newCaseId, gmapUrl, workSummary, buildingsText,
-  NET_OPTS, FILM_OPTS, WINCH_SIDES, ROOF_MATS, normMaterials, materialsText, winchSideOf, TILE_URL, TILE_OPTS } from './util.js';
+  NET_OPTS, FILM_OPTS, DOOR_OPTS, WINCH_SIDES, ROOF_MATS, normMaterials, materialsText, winchSideOf, TILE_URL, TILE_OPTS } from './util.js';
 import { ICON } from './icons.js';
 import { sfx } from './sound.js';
 import { call, queueAdd } from './api.js';
@@ -24,7 +24,7 @@ function blank() {
     lat: null, lng: null, acc: null, address: '',
     customerName: '', phone: '', photos: [], keepPhotos: [],
     workType: '', buildings: [{ length: '', width: '', count: '' }],
-    materials: { net: '', film: '', winchSide: '', roof: [] },
+    materials: { net: '', sideFilm: '', endFilm: '', door: 'front', roof: [] },
     existing: { length: '', width: '', count: '' },
     repair: { film: { on: false, arc: '', length: '', notMeasured: false }, net: { on: false, side: '' },
       sLine: false, winch: false, winchSide: '', blackRope: false, other: { on: false, text: '' } },
@@ -368,25 +368,24 @@ function renderNew(box) {
     <button class="btn block" id="add-row">${ICON.plus({ size: 18 })}再新增一種尺寸</button>
     <div class="total" id="total"></div>
     <div class="lbl" style="margin-top:18px">四周材料（選填）</div>
-    <div class="foot-note">通常兩層：網在內（固定）＋膜在外。再按一次可取消。</div>
+    <div class="foot-note">網在內（固定）＋膜在外；兩側長邊和前後端面的膜分開選。再按一次可取消。</div>
     <div class="lbl">網（內層，單選）</div>
     <div class="radio-row">${Object.entries(NET_OPTS).map(([k, v]) => optBtn('net', k, v, S.materials.net === k)).join('')}</div>
-    <div class="lbl" style="margin-top:10px">膜（外層，單選）</div>
-    <div class="radio-row">${Object.entries(FILM_OPTS).map(([k, v]) => optBtn('film', k, v, S.materials.film === k)).join('')}</div>
-    <div class="sub ${S.materials.film === 'winch' ? '' : 'hidden'}" id="sub-mwinch">
-      <div class="lbl">捲揚位置</div>
-      <div class="radio-row">${WINCH_SIDES.map(v => optBtn('winchSide', v, v, S.materials.winchSide === v)).join('')}</div>
-    </div>
+    <div class="lbl" style="margin-top:10px">兩側長邊的膜（外層）</div>
+    <div class="radio-row">${Object.entries(FILM_OPTS).map(([k, v]) => optBtn('sideFilm', k, v, S.materials.sideFilm === k)).join('')}</div>
+    <div class="lbl" style="margin-top:10px">前後端面的膜（外層）</div>
+    <div class="radio-row">${Object.entries(FILM_OPTS).map(([k, v]) => optBtn('endFilm', k, v, S.materials.endFilm === k)).join('')}</div>
+    <div class="lbl" style="margin-top:10px">門</div>
+    <div class="radio-row">${Object.entries(DOOR_OPTS).map(([k, v]) => optBtn('door', k, v, S.materials.door === k)).join('')}</div>
+    <div class="foot-note">端面有做捲揚時，門會靠到那一面的最左邊。</div>
     <div class="lbl" style="margin-top:14px">屋頂材料（可複選）</div>
     <div class="mat-grid">${Object.entries(ROOF_MATS).map(([k, v]) => matCheck(k, v)).join('')}</div>`;
   $$('[data-opt]', box).forEach(b => b.onclick = () => {
     sfx.beep();
     const [g, v] = b.dataset.opt.split(':');
-    if (g === 'winchSide') S.materials.winchSide = v;
-    else S.materials[g] = S.materials[g] === v ? '' : v;   // 再按一次同一顆＝取消（材料是選填）
-    if (g === 'film') S.materials.winchSide = S.materials.film === 'winch' ? (S.materials.winchSide || '兩側') : '';
-    ['net', 'film', 'winchSide'].forEach(gr => $$(`[data-opt^="${gr}:"]`, box).forEach(x => x.classList.toggle('on', x.dataset.opt === `${gr}:${S.materials[gr]}`)));
-    $('#sub-mwinch').classList.toggle('hidden', S.materials.film !== 'winch');
+    if (g === 'door') S.materials.door = v;                    // 門一定有值（預設前端）
+    else S.materials[g] = S.materials[g] === v ? '' : v;      // 再按一次同一顆＝取消（材料是選填）
+    ['net', 'sideFilm', 'endFilm', 'door'].forEach(gr => $$(`[data-opt^="${gr}:"]`, box).forEach(x => x.classList.toggle('on', x.dataset.opt === `${gr}:${S.materials[gr]}`)));
     saveDraft();
   });
   $$('[data-mat]', box).forEach(cb => cb.onchange = () => {
@@ -573,7 +572,8 @@ function renderStep3(body) {
         ${c.workType === 'new'
           ? `<dt>尺寸</dt><dd>${buildingsText(c.buildings)}</dd><dt>總面積</dt><dd>${fmt(area)} ㎡（${fmt(area / PING_M2)} 坪）</dd>
              <dt>四周材料</dt><dd>${materialsText(c.materials, 'side') || '未選'}</dd>
-             <dt>屋頂材料</dt><dd>${materialsText(c.materials, 'roof') || '未選'}</dd>`
+             <dt>屋頂材料</dt><dd>${materialsText(c.materials, 'roof') || '未選'}</dd>
+             <dt>門</dt><dd>${materialsText(c.materials, 'door')}</dd>`
           : `${c.buildings.length ? `<dt>現有溫室</dt><dd>${buildingsText(c.buildings)}</dd>` : ''}<dt>維修項目</dt><dd>${esc(workSummary(c).replace(/^維修：/, ''))}</dd>`}
       </dl>
       <div class="muted" style="font-size:14px">所有尺寸單位：米</div>

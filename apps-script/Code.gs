@@ -21,7 +21,8 @@ var CASE_HEADERS = [
 ];
 var JSON_COLS = ['buildings', 'repair', 'photos', 'materials'];
 var NET_OPTS = ['blackNet', 'insectNet', 'none'];   // 四周網（內層，單選）
-var FILM_OPTS = ['none', 'fixed', 'winch'];         // 四周膜（外層，單選）
+var FILM_OPTS = ['none', 'fixed', 'winch'];         // 兩側長邊膜／前後端面膜（外層，單選）
+var DOOR_OPTS = ['front', 'back', 'both', 'none'];   // 門
 var WINCH_SIDES = ['兩側', '前後', '四周'];
 var ROOF_MATS = ['film', 'canvas', 'knitNet', 'shade'];
 var STATUSES = ['survey', 'building', 'done', 'dropped'];
@@ -100,7 +101,7 @@ function seedTestData() {
       customerName: '測試王小明', phone: '0900-000-001', lat: 22.9105, lng: 121.1352,
       address: '臺東縣鹿野鄉龍田村（測試）', workType: 'new',
       buildings: [{ length: 30, width: 6, count: 2 }, { length: 20, width: 8, count: 1 }], repair: null,
-      materials: { net: 'blackNet', film: 'winch', winchSide: '兩側', roof: ['canvas', 'knitNet'] },
+      materials: { net: 'blackNet', sideFilm: 'winch', endFilm: 'fixed', door: 'both', roof: ['canvas', 'knitNet'] },
       photos: [], notes: '測試：場勘中，超過 7 天沒動，應出現紅框',
       status: 'survey', statusUpdatedAt: new Date(now - 10 * day), nextAction: '補報價單', owner: '', dueDate: ''
     },
@@ -119,7 +120,7 @@ function seedTestData() {
       customerName: '測試陳美玲', phone: '0900-000-003', lat: 22.9568, lng: 121.1531,
       address: '臺東縣鹿野鄉瑞源村（測試）', workType: 'new',
       buildings: [{ length: 50, width: 8, count: 3 }], repair: null,
-      materials: { net: 'insectNet', film: 'fixed', winchSide: '', roof: ['film', 'shade'] },
+      materials: { net: 'insectNet', sideFilm: 'fixed', endFilm: 'fixed', door: 'front', roof: ['film', 'shade'] },
       photos: [], notes: '測試：已完工',
       status: 'done', statusUpdatedAt: new Date(now - 5 * day), nextAction: '', owner: '', dueDate: ''
     }
@@ -495,19 +496,29 @@ function num_(v) { var n = parseFloat(v); return isFinite(n) ? Math.round(n * 1e
 function fail_(code, msg) { var e = new Error(msg); e.code = code; return e; }
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
-/** 新建材料整理：{ net, film, winchSide, roof:[] }；舊格式 { side:[...], roof:[...] } 自動轉換 */
+/** 新建材料整理：{ net, sideFilm, endFilm, door, roof:[] }
+ *  舊格式自動轉換：{ side:[...] }（最舊）、{ net, film, winchSide }（第二版）；沒有門→前端 */
 function normMaterials_(m) {
   m = m || {};
   var roof = ROOF_MATS.filter(function (k) { return Array.isArray(m.roof) && m.roof.indexOf(k) >= 0; });
-  var net = '', film = '', winchSide = '';
+  var net = '', sideFilm = '', endFilm = '';
   if (Array.isArray(m.side)) {
     net = m.side.indexOf('blackNet') >= 0 ? 'blackNet' : m.side.indexOf('insectNet') >= 0 ? 'insectNet' : '';
-    film = m.side.indexOf('winch') >= 0 ? 'winch' : m.side.indexOf('film') >= 0 ? 'fixed' : '';
+    if (m.side.indexOf('winch') >= 0) sideFilm = 'winch';
+    else if (m.side.indexOf('film') >= 0) { sideFilm = 'fixed'; endFilm = 'fixed'; }
   } else {
     net = NET_OPTS.indexOf(m.net) >= 0 ? m.net : '';
-    film = FILM_OPTS.indexOf(m.film) >= 0 ? m.film : '';
-    winchSide = m.winchSide;
+    if (m.hasOwnProperty('sideFilm') || m.hasOwnProperty('endFilm')) {
+      sideFilm = FILM_OPTS.indexOf(m.sideFilm) >= 0 ? m.sideFilm : '';
+      endFilm = FILM_OPTS.indexOf(m.endFilm) >= 0 ? m.endFilm : '';
+    } else if (m.film === 'fixed' || m.film === 'none') {
+      sideFilm = endFilm = m.film;
+    } else if (m.film === 'winch') {
+      var ws = WINCH_SIDES.indexOf(m.winchSide) >= 0 ? m.winchSide : '兩側';
+      if (ws !== '前後') sideFilm = 'winch';
+      if (ws !== '兩側') endFilm = 'winch';
+    }
   }
-  winchSide = film === 'winch' ? (WINCH_SIDES.indexOf(winchSide) >= 0 ? winchSide : '兩側') : '';
-  return { net: net, film: film, winchSide: winchSide, roof: roof };
+  var door = DOOR_OPTS.indexOf(m.door) >= 0 ? m.door : 'front';
+  return { net: net, sideFilm: sideFilm, endFilm: endFilm, door: door, roof: roof };
 }

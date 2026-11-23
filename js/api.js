@@ -142,7 +142,7 @@ function mockDb() {
         { caseId: 'TEST-001', createdAt: new Date(now - 12 * day).toISOString(), createdBy: 'Umock-staff', createdByName: '測試員工阿明',
           customerName: '測試王小明', phone: '0900-000-001', lat: 22.9105, lng: 121.1352, address: '臺東縣鹿野鄉龍田村（測試）',
           workType: 'new', buildings: [{ length: 30, width: 6, count: 2 }, { length: 20, width: 8, count: 1 }], repair: null, photos: [],
-          materials: { net: 'blackNet', film: 'winch', winchSide: '兩側', roof: ['canvas', 'knitNet'] },
+          materials: { net: 'blackNet', sideFilm: 'winch', endFilm: 'fixed', door: 'both', roof: ['canvas', 'knitNet'] },
           notes: '測試：場勘中，超過 7 天沒動', status: 'survey', statusUpdatedAt: new Date(now - 10 * day).toISOString(), nextAction: '補報價單', owner: '', dueDate: '' },
         { caseId: 'TEST-002', createdAt: new Date(now - 20 * day).toISOString(), createdBy: 'Umock-admin', createdByName: '測試管理員',
           customerName: '測試李大華', phone: '0900-000-002', lat: 22.9262, lng: 121.1158, address: '臺東縣鹿野鄉永安村（測試）',
@@ -152,22 +152,22 @@ function mockDb() {
         { caseId: 'TEST-003', createdAt: new Date(now - 45 * day).toISOString(), createdBy: 'Umock-staff', createdByName: '測試員工阿明',
           customerName: '測試陳美玲', phone: '0900-000-003', lat: 22.9568, lng: 121.1531, address: '臺東縣鹿野鄉瑞源村（測試）',
           workType: 'new', buildings: [{ length: 50, width: 8, count: 3 }], repair: null, photos: [],
-          materials: { net: 'insectNet', film: 'fixed', winchSide: '', roof: ['film', 'shade'] },
+          materials: { net: 'insectNet', sideFilm: 'fixed', endFilm: 'fixed', door: 'front', roof: ['film', 'shade'] },
           notes: '測試：已完工', status: 'done', statusUpdatedAt: new Date(now - 5 * day).toISOString(), nextAction: '', owner: '', dueDate: '' },
       ],
       photos: {},
-      v: 3,
+      v: 4,
     };
     store.set('mock_db', db);
   }
-  if (db.v !== 3) {
-    // 舊的測試資料改成新材料格式（2026-11-23：網在內＋膜在外）
-    const add = { 'TEST-001': { net: 'blackNet', film: 'winch', winchSide: '兩側', roof: ['canvas', 'knitNet'] }, 'TEST-003': { net: 'insectNet', film: 'fixed', winchSide: '', roof: ['film', 'shade'] } };
+  if (db.v !== 4) {
+    // 舊的測試資料改成新材料格式（2026-11-23：兩側／前後膜分開＋門）
+    const add = { 'TEST-001': { net: 'blackNet', sideFilm: 'winch', endFilm: 'fixed', door: 'both', roof: ['canvas', 'knitNet'] }, 'TEST-003': { net: 'insectNet', sideFilm: 'fixed', endFilm: 'fixed', door: 'front', roof: ['film', 'shade'] } };
     db.cases.forEach(c => {
       if (add[c.caseId]) c.materials = add[c.caseId];
       if (c.caseId === 'TEST-002' && c.repair && !c.repair.winch?.side) c.repair.winch = { side: '兩側' };
     });
-    db.v = 3;
+    db.v = 4;
     store.set('mock_db', db);
   }
   return db;
