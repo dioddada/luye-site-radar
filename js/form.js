@@ -1,6 +1,7 @@
 // 引導式表單：一步一頁
 import { $, $$, esc, store, toast, fmt, num, totalArea, PING_M2, parseLatLng, needsResolve, extractUrl,
-  compressImage, newCaseId, gmapUrl, workSummary, buildingsText } from './util.js';
+  compressImage, newCaseId, gmapUrl, workSummary, buildingsText,
+  SIDE_MATS, ROOF_MATS, normMaterials, materialsText } from './util.js';
 import { sfx } from './sound.js';
 import { call, queueAdd } from './api.js';
 import { photoUrl } from './mapview.js';
@@ -21,6 +22,7 @@ function blank() {
     lat: null, lng: null, acc: null, address: '',
     customerName: '', phone: '', photos: [], keepPhotos: [],
     workType: '', buildings: [{ length: '', width: '', count: '' }],
+    materials: { side: [], roof: [] },
     existing: { length: '', width: '', count: '' },
     repair: { film: { on: false, arc: '', length: '', notMeasured: false }, net: { on: false, side: '' },
       sLine: false, winch: false, blackRope: false, other: { on: false, text: '' } },
@@ -48,6 +50,7 @@ function fromCase(c) {
   } else if (c.buildings && c.buildings.length) {
     s.buildings = c.buildings.map(b => ({ length: b.length, width: b.width, count: b.count }));
   }
+  if (c.workType !== 'repair') s.materials = normMaterials(c.materials);
   return s;
 }
 
@@ -355,7 +358,20 @@ function renderNew(box) {
     <div class="lbl">溫室尺寸（每一種尺寸一列）</div>
     <div id="dim-rows"></div>
     <button class="btn block" id="add-row">＋ 再新增一種尺寸</button>
-    <div class="total" id="total"></div>`;
+    <div class="total" id="total"></div>
+    <div class="lbl" style="margin-top:18px">四周材料（可複選）</div>
+    <div class="mat-grid">${Object.entries(SIDE_MATS).map(([k, v]) => matCheck('side', k, v)).join('')}</div>
+    <div class="lbl" style="margin-top:12px">屋頂材料（可複選）</div>
+    <div class="mat-grid">${Object.entries(ROOF_MATS).map(([k, v]) => matCheck('roof', k, v)).join('')}</div>`;
+  if (!S.materials) S.materials = { side: [], roof: [] };
+  $$('[data-mat]', box).forEach(cb => cb.onchange = () => {
+    sfx.beep();
+    const [part, k] = cb.dataset.mat.split(':');
+    const list = S.materials[part] = (S.materials[part] || []).filter(x => x !== k);
+    if (cb.checked) list.push(k);
+    cb.parentElement.classList.toggle('on', cb.checked);
+    saveDraft();
+  });
   const rows = $('#dim-rows');
   const draw = () => {
     rows.innerHTML = S.buildings.map((b, i) => `
@@ -377,6 +393,11 @@ function renderNew(box) {
   };
   $('#add-row').onclick = () => { sfx.beep(); S.buildings.push({ length: '', width: '', count: '' }); draw(); saveDraft(); };
   draw(); updateTotal();
+}
+
+function matCheck(part, k, label) {
+  const on = (S.materials?.[part] || []).includes(k);
+  return `<label class="check ${on ? 'on' : ''}"><input type="checkbox" data-mat="${part}:${k}" ${on ? 'checked' : ''}>${label}</label>`;
 }
 
 function renderRepair(box) {
@@ -472,7 +493,9 @@ function buildCase() {
   };
   if (S.workType === 'new') {
     c.buildings = S.buildings.map(b => ({ length: num(b.length), width: num(b.width), count: num(b.count) }));
+    c.materials = normMaterials(S.materials);
   } else {
+    c.materials = null;
     const e = S.existing;
     if (num(e.length) || num(e.width) || num(e.count)) c.buildings = [{ length: num(e.length), width: num(e.width), count: num(e.count) }];
     const r = S.repair, out = {};
@@ -504,7 +527,9 @@ function renderStep3(body) {
         <dt>照片</dt><dd>${S.photos.length + S.keepPhotos.length} 張</dd>
         <dt>作業</dt><dd>${c.workType === 'new' ? '新建' : '維修'}</dd>
         ${c.workType === 'new'
-          ? `<dt>尺寸</dt><dd>${buildingsText(c.buildings)}</dd><dt>總面積</dt><dd>${fmt(area)} ㎡（${fmt(area / PING_M2)} 坪）</dd>`
+          ? `<dt>尺寸</dt><dd>${buildingsText(c.buildings)}</dd><dt>總面積</dt><dd>${fmt(area)} ㎡（${fmt(area / PING_M2)} 坪）</dd>
+             <dt>四周材料</dt><dd>${materialsText(c.materials, 'side') || '未選'}</dd>
+             <dt>屋頂材料</dt><dd>${materialsText(c.materials, 'roof') || '未選'}</dd>`
           : `${c.buildings.length ? `<dt>現有溫室</dt><dd>${buildingsText(c.buildings)}</dd>` : ''}<dt>維修項目</dt><dd>${esc(workSummary(c).replace(/^維修：/, ''))}</dd>`}
       </dl>
       <div class="muted" style="font-size:14px">所有尺寸單位：米</div>

@@ -16,8 +16,12 @@ var USER_HEADERS = ['lineUserId', '姓名', '角色', '狀態', '建立時間'];
 var CASE_HEADERS = [
   'caseId', 'createdAt', 'createdBy', 'createdByName', 'customerName', 'phone',
   'lat', 'lng', 'address', 'workType', 'buildings', 'repair', 'photos', 'notes',
-  'status', 'statusUpdatedAt', 'nextAction', 'owner', 'dueDate'
+  'status', 'statusUpdatedAt', 'nextAction', 'owner', 'dueDate',
+  'materials' // 2026-11-23 新增（新建的四周／屋頂材料 JSON），放表尾；舊試算表重跑 setup() 會補上
 ];
+var JSON_COLS = ['buildings', 'repair', 'photos', 'materials'];
+var SIDE_MATS = ['blackNet', 'winch', 'film', 'insectNet'];
+var ROOF_MATS = ['film', 'canvas', 'knitNet', 'shade'];
 var STATUSES = ['survey', 'building', 'done', 'dropped'];
 var ACTIVE = '啟用';
 var PENDING = '待審';
@@ -53,6 +57,15 @@ function setup() {
     cases.appendRow(CASE_HEADERS);
     cases.setFrozenRows(1);
     cases.getRange(1, 1, 1, CASE_HEADERS.length).setFontWeight('bold');
+  } else {
+    // 舊版試算表：表尾補上新欄位（只補不刪，不動既有資料）
+    var have = cases.getRange(1, 1, 1, Math.max(cases.getLastColumn(), 1)).getValues()[0].map(String);
+    CASE_HEADERS.forEach(function (h, i) {
+      if (have[i] === h) return;
+      if (have[i]) throw new Error('Cases 第 ' + (i + 1) + ' 欄應該是「' + h + '」，現在是「' + have[i] + '」，請檢查表頭');
+      cases.getRange(1, i + 1).setValue(h).setFontWeight('bold');
+      Logger.log('Cases 補上欄位：' + h);
+    });
   }
 
   var def = ss.getSheetByName('工作表1') || ss.getSheetByName('Sheet1');
@@ -85,6 +98,7 @@ function seedTestData() {
       customerName: '測試王小明', phone: '0900-000-001', lat: 22.9105, lng: 121.1352,
       address: '臺東縣鹿野鄉龍田村（測試）', workType: 'new',
       buildings: [{ length: 30, width: 6, count: 2 }, { length: 20, width: 8, count: 1 }], repair: null,
+      materials: { side: ['blackNet', 'winch'], roof: ['canvas', 'knitNet'] },
       photos: [], notes: '測試：場勘中，超過 7 天沒動，應出現紅框',
       status: 'survey', statusUpdatedAt: new Date(now - 10 * day), nextAction: '補報價單', owner: '', dueDate: ''
     },
@@ -93,7 +107,8 @@ function seedTestData() {
       customerName: '測試李大華', phone: '0900-000-002', lat: 22.9262, lng: 121.1158,
       address: '臺東縣鹿野鄉永安村（測試）', workType: 'repair',
       buildings: [{ length: 40, width: 7, count: 1 }],
-      repair: { film: { arc: 9.5, length: 40, notMeasured: false }, net: { side: '兩側' }, sLine: true, other: '' },
+      repair: { film: { arc: 9.5, length: 40, notMeasured: false }, net: { side: '兩側' }, sLine: true, winch: true, other: '' },
+      materials: null,
       photos: [], notes: '測試：施工中',
       status: 'building', statusUpdatedAt: new Date(now - 3 * day), nextAction: '換膜收尾', owner: '', dueDate: ''
     },
@@ -102,12 +117,19 @@ function seedTestData() {
       customerName: '測試陳美玲', phone: '0900-000-003', lat: 22.9568, lng: 121.1531,
       address: '臺東縣鹿野鄉瑞源村（測試）', workType: 'new',
       buildings: [{ length: 50, width: 8, count: 3 }], repair: null,
+      materials: { side: ['insectNet', 'film'], roof: ['film', 'shade'] },
       photos: [], notes: '測試：已完工',
       status: 'done', statusUpdatedAt: new Date(now - 5 * day), nextAction: '', owner: '', dueDate: ''
     }
   ];
   rows.forEach(function (c) {
-    if (findCaseRow_(sheet, c.caseId) > 0) return;
+    var row = findCaseRow_(sheet, c.caseId);
+    if (row > 0) {
+      // 已存在：只補上新欄位 materials（之前插入的測試資料沒有）
+      var col = CASE_HEADERS.indexOf('materials') + 1;
+      if (c.materials && !sheet.getRange(row, col).getValue()) sheet.getRange(row, col).setValue(JSON.stringify(c.materials));
+      return;
+    }
     sheet.appendRow(caseToRow_(c));
   });
   Logger.log('測試資料完成');
@@ -262,7 +284,7 @@ function updateCase_(user, req) {
     var keep = (req.keepPhotos || []).filter(function (id) { return cur.photos.indexOf(id) >= 0; });
     var removed = cur.photos.filter(function (id) { return keep.indexOf(id) < 0; });
     var oldCount = cur.photos.length;
-    ['customerName', 'phone', 'lat', 'lng', 'address', 'workType', 'buildings', 'repair', 'notes'].forEach(function (k) {
+    ['customerName', 'phone', 'lat', 'lng', 'address', 'workType', 'buildings', 'repair', 'materials', 'notes'].forEach(function (k) {
       cur[k] = data[k];
     });
     cur.photos = keep.concat((req.photos || []).map(function () { return 'pending'; }));
@@ -380,6 +402,14 @@ function cleanCase_(c) {
     if (r.blackRope) repair.blackRope = true;
     if (r.other) repair.other = str_(r.other, 500);
   }
+  var materials = null;
+  if (workType === 'new') {
+    var m = c.materials || {};
+    var pick = function (list, allowed) {
+      return allowed.filter(function (k) { return Array.isArray(list) && list.indexOf(k) >= 0; });
+    };
+    materials = { side: pick(m.side, SIDE_MATS), roof: pick(m.roof, ROOF_MATS) };
+  }
   return {
     customerName: str_(c.customerName, 50),
     phone: str_(c.phone, 30),
@@ -389,6 +419,7 @@ function cleanCase_(c) {
     workType: workType,
     buildings: buildings,
     repair: repair,
+    materials: materials,
     notes: str_(c.notes, 2000)
   };
 }
@@ -403,7 +434,7 @@ function validateCase_(c) {
 function caseToRow_(c) {
   return CASE_HEADERS.map(function (h) {
     var v = c[h];
-    if (h === 'buildings' || h === 'repair' || h === 'photos') return v ? JSON.stringify(v) : '';
+    if (JSON_COLS.indexOf(h) >= 0) return v ? JSON.stringify(v) : '';
     if (v instanceof Date) return v;
     if (h === 'createdAt' || h === 'statusUpdatedAt') return v ? new Date(v) : '';
     if (typeof v === 'number') return v;
@@ -415,8 +446,9 @@ function rowToCase_(row) {
   var c = {};
   CASE_HEADERS.forEach(function (h, i) {
     var v = row[i];
-    if (h === 'buildings' || h === 'repair' || h === 'photos') {
-      try { v = v ? JSON.parse(v) : (h === 'repair' ? null : []); } catch (e) { v = h === 'repair' ? null : []; }
+    if (JSON_COLS.indexOf(h) >= 0) {
+      var empty = (h === 'repair' || h === 'materials') ? null : [];
+      try { v = v ? JSON.parse(v) : empty; } catch (e) { v = empty; }
     } else if (v instanceof Date) {
       v = h === 'dueDate' ? Utilities.formatDate(v, 'Asia/Taipei', 'yyyy-MM-dd') : v.toISOString();
     } else if (h === 'lat' || h === 'lng') {

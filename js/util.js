@@ -63,6 +63,22 @@ export function fmtDate(iso) {
 
 export const REPAIR_LABELS = { film: '更換農膜', net: '維修網子', sLine: '更換 S 線', winch: '更換捲揚', blackRope: '更換黑繩', other: '其他' };
 
+// 新建材料（可複選）。鍵名存進 Cases 的 materials 欄（JSON：{ side: [...], roof: [...] }）
+export const SIDE_MATS = { blackNet: '黑網', winch: '捲揚', film: '農膜', insectNet: '防蟲網' };
+export const ROOF_MATS = { film: '農膜', canvas: '帆布', knitNet: '針織網', shade: '遮陰網' };
+
+/** 整理 materials：只留認得的鍵、照固定順序 */
+export function normMaterials(m) {
+  const pick = (list, dict) => Object.keys(dict).filter(k => Array.isArray(list) && list.includes(k));
+  return { side: pick(m && m.side, SIDE_MATS), roof: pick(m && m.roof, ROOF_MATS) };
+}
+
+export function materialsText(m, part) {
+  const n = normMaterials(m);
+  const dict = part === 'side' ? SIDE_MATS : ROOF_MATS;
+  return n[part].map(k => dict[k]).join('＋');
+}
+
 /** 作業內容的一行摘要 */
 export function workSummary(c) {
   if (c.workType === 'repair') {

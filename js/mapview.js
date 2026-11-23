@@ -1,6 +1,7 @@
 // 雷達主畫面：地圖、篩選、列表、底部案件卡片
 import { $, $$, esc, store, toast, fmt, STATUS, STATUS_KEYS, isStale, daysSince, fmtDate,
-  workSummary, buildingsText, totalArea, PING_M2, navUrl } from './util.js';
+  workSummary, buildingsText, totalArea, PING_M2, navUrl, materialsText } from './util.js';
+import { mountGreenhouse } from './greenhouse3d.js';
 import { sfx } from './sound.js';
 import { call } from './api.js';
 
@@ -13,6 +14,8 @@ let me = null;
 let filters = store.get('filters', { survey: true, building: true, done: true, dropped: false });
 let listMode = false;
 let currentId = null;
+let gh = null; // 3D 爆炸圖
+function killGh() { if (gh) { gh.dispose(); gh = null; } }
 const photoCache = new Map();
 let hooks = { onEdit: () => {}, onChanged: () => {} };
 
@@ -26,7 +29,7 @@ export function initMap(user, h) {
   }).addTo(map);
   layer = L.layerGroup().addTo(map);
 
-  $('#btn-locate').onclick = locateMe;
+  $('#btn-mylocation').onclick = locateMe;
   $('#btn-toggle-list').onclick = () => { sfx.beep(); setList(!listMode); };
   $('#sheet-backdrop').onclick = () => { sfx.back(); closeSheet(); };
   renderFilters();
@@ -38,7 +41,7 @@ let locating = false;
 function locateMe() {
   sfx.beep();
   if (locating) return;
-  const btn = $('#btn-locate');
+  const btn = $('#btn-mylocation');
   if (!navigator.geolocation) { toast('這台裝置不支援定位', true); return; }
   locating = true;
   btn.classList.add('busy');
@@ -160,6 +163,7 @@ export function openSheet(id) {
 
 export function closeSheet() {
   currentId = null;
+  killGh();
   $('#sheet').classList.remove('open');
   $('#sheet-backdrop').classList.add('hidden');
 }
@@ -184,8 +188,11 @@ function renderSheet(c) {
       ? `<dt>其他項目</dt><dd>${[r.sLine && '更換 S 線', r.winch && '更換捲揚', r.blackRope && '更換黑繩'].filter(Boolean).join('、')}</dd>` : ''}
     ${r.other ? `<dt>其他</dt><dd>${esc(r.other)}</dd>` : ''}` : `
     <dt>尺寸</dt><dd>${buildingsText(c.buildings) || '—'}</dd>
-    <dt>總面積</dt><dd>${fmt(area)} ㎡（${fmt(area / PING_M2)} 坪）</dd>`;
+    <dt>總面積</dt><dd>${fmt(area)} ㎡（${fmt(area / PING_M2)} 坪）</dd>
+    <dt>四周材料</dt><dd>${materialsText(c.materials, 'side') || '—'}</dd>
+    <dt>屋頂材料</dt><dd>${materialsText(c.materials, 'roof') || '—'}</dd>`;
 
+  killGh();
   $('#sheet-body').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
       <div>
@@ -211,6 +218,7 @@ function renderSheet(c) {
       <dt>填寫人</dt><dd>${esc(c.createdByName || '')}・${fmtDate(c.createdAt)}</dd>
       <dt>狀態更新</dt><dd>${fmtDate(c.statusUpdatedAt)}</dd>
     </dl>
+    <div id="gh3d-box"></div>
     <div class="lbl">照片（${(c.photos || []).length}）</div>
     <div class="photos">${(c.photos || []).map(id => `<div class="ph" data-photo="${esc(id)}">載入中…</div>`).join('') || '<span class="muted">沒有照片</span>'}</div>
     ${canEdit(c) ? `<button class="btn block" id="sheet-edit">✎ 修改案件資料</button>` : ''}
@@ -220,6 +228,7 @@ function renderSheet(c) {
   const editBtn = $('#sheet-edit');
   if (editBtn) editBtn.onclick = () => { sfx.confirm(); const cc = c; closeSheet(); hooks.onEdit(cc); };
   loadPhotos(c);
+  gh = mountGreenhouse($('#gh3d-box'), c);
   if (isAdmin) bindAdmin(c);
 }
 
