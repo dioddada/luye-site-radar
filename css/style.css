@@ -215,3 +215,8 @@ textarea { min-height: 110px; resize: vertical; }
 .gh3d-items .hot { padding: 3px 8px; background: rgba(255,176,32,.15); border: 1px solid #ffb020; color: #ffd27a; font-weight: 700; font-size: 14px; }
 .gh3d-fallback { padding: 10px; }
 .gh3d-fallback ul { margin: 6px 0 0; padding-left: 20px; }
+/* 3D 爆炸圖：攝影棚風（淺灰白背景），卡片其他部分維持深色 */
+.gh3d-stage.studio { height: 340px; background: radial-gradient(ellipse at 50% 30%, #fbfcfd 0%, #e6e9ed 50%, #bfc6ce 100%); }
+.gh3d-stage.studio .gh3d-tag { color: #1e2630; background: rgba(255,255,255,.88); border: 1px solid #b8c0ca; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.gh3d-stage.studio .gh3d-tag.hot { color: #fff; background: #ff7a00; border-color: #ffb066; box-shadow: 0 0 10px rgba(255,122,0,.7); }
+.gh3d-stage.studio .gh3d-hint { color: #4a5563; background: rgba(255,255,255,.75); }

@@ -63,20 +63,57 @@ export function fmtDate(iso) {
 
 export const REPAIR_LABELS = { film: '更換農膜', net: '維修網子', sLine: '更換 S 線', winch: '更換捲揚', blackRope: '更換黑繩', other: '其他' };
 
-// 新建材料（可複選）。鍵名存進 Cases 的 materials 欄（JSON：{ side: [...], roof: [...] }）
-export const SIDE_MATS = { blackNet: '黑網', winch: '捲揚', film: '農膜', insectNet: '防蟲網' };
+// 新建材料（2026-11-23 改版）：四周＝網在內（單選）＋膜在外（無／固定／捲揚，捲揚再選位置）；屋頂可複選。
+// 存進 Cases 的 materials 欄（JSON：{ net, film, winchSide, roof: [...] }）
+//   net：'' 未選／'none' 無／'blackNet'／'insectNet'
+//   film：'' 未選／'none' 無／'fixed' 固定／'winch' 捲揚
+//   winchSide：'兩側'／'前後'／'四周'（film＝winch 才有）
+export const NET_OPTS = { blackNet: '黑網', insectNet: '防蟲網', none: '無' };
+export const FILM_OPTS = { none: '無', fixed: '固定', winch: '捲揚' };
+export const WINCH_SIDES = ['兩側', '前後', '四周'];
 export const ROOF_MATS = { film: '農膜', canvas: '帆布', knitNet: '針織網', shade: '遮陰網' };
 
-/** 整理 materials：只留認得的鍵、照固定順序 */
+/** 整理 materials：只留認得的值；舊格式 { side: [...], roof: [...] } 自動轉成新格式 */
 export function normMaterials(m) {
-  const pick = (list, dict) => Object.keys(dict).filter(k => Array.isArray(list) && list.includes(k));
-  return { side: pick(m && m.side, SIDE_MATS), roof: pick(m && m.roof, ROOF_MATS) };
+  m = m || {};
+  const roof = Object.keys(ROOF_MATS).filter(k => Array.isArray(m.roof) && m.roof.includes(k));
+  let net = '', film = '', winchSide = '';
+  if (Array.isArray(m.side)) {            // 舊格式
+    const sd = m.side;
+    net = sd.includes('blackNet') ? 'blackNet' : sd.includes('insectNet') ? 'insectNet' : '';
+    film = sd.includes('winch') ? 'winch' : sd.includes('film') ? 'fixed' : '';
+  } else {
+    net = NET_OPTS[m.net] ? m.net : '';
+    film = FILM_OPTS[m.film] ? m.film : '';
+    winchSide = m.winchSide;
+  }
+  if (film === 'winch') winchSide = WINCH_SIDES.includes(winchSide) ? winchSide : '兩側';
+  else winchSide = '';
+  return { net, film, winchSide, roof };
 }
 
+export function materialsEmpty(m) {
+  const n = normMaterials(m);
+  return !n.net && !n.film && !n.roof.length;
+}
+
+/** 材料文字：part＝'side'（四周）或 'roof'（屋頂） */
 export function materialsText(m, part) {
   const n = normMaterials(m);
-  const dict = part === 'side' ? SIDE_MATS : ROOF_MATS;
-  return n[part].map(k => dict[k]).join('＋');
+  if (part === 'roof') return n.roof.map(k => ROOF_MATS[k]).join('＋');
+  const out = [];
+  if (n.net) out.push(n.net === 'none' ? '無網' : NET_OPTS[n.net] + '（內，固定）');
+  if (n.film === 'none') out.push('無膜');
+  else if (n.film === 'fixed') out.push('農膜（外，固定）');
+  else if (n.film === 'winch') out.push(`捲揚膜（外，${n.winchSide}）`);
+  return out.join('＋');
+}
+
+/** 維修的「更換捲揚」位置：舊資料 true 視為「兩側」；沒勾回傳 '' */
+export function winchSideOf(w) {
+  if (!w) return '';
+  if (typeof w === 'object' && WINCH_SIDES.includes(w.side)) return w.side;
+  return '兩側';
 }
 
 /** 作業內容的一行摘要 */
@@ -87,7 +124,7 @@ export function workSummary(c) {
     if (r.film) parts.push(r.film.notMeasured ? '換膜（尺寸待補）' : `換膜 弧長${fmt(r.film.arc)}米×長${fmt(r.film.length)}米`);
     if (r.net) parts.push(`網子（${r.net.side || '?'}）`);
     if (r.sLine) parts.push('S 線');
-    if (r.winch) parts.push('捲揚');
+    if (r.winch) parts.push(`捲揚（${winchSideOf(r.winch)}）`);
     if (r.blackRope) parts.push('黑繩');
     if (r.other) parts.push(`其他：${r.other}`);
     return '維修：' + (parts.join('、') || '—');

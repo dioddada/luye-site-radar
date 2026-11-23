@@ -1,6 +1,6 @@
 // 雷達主畫面：地圖、篩選、列表、底部案件卡片
 import { $, $$, esc, store, toast, fmt, STATUS, STATUS_KEYS, isStale, daysSince, fmtDate,
-  workSummary, buildingsText, totalArea, PING_M2, navUrl, materialsText } from './util.js';
+  workSummary, buildingsText, totalArea, PING_M2, navUrl, materialsText, winchSideOf } from './util.js';
 import { mountGreenhouse } from './greenhouse3d.js';
 import { sfx } from './sound.js';
 import { call } from './api.js';
@@ -184,8 +184,9 @@ function renderSheet(c) {
     ${c.buildings && c.buildings.length ? `<dt>現有溫室</dt><dd>${buildingsText(c.buildings)}</dd>` : ''}
     ${r.film ? `<dt>更換農膜</dt><dd>${r.film.notMeasured ? '<span style="color:var(--red)">現場沒量到，之後補</span>' : `弧長 ${fmt(r.film.arc)} 米 × 長度 ${fmt(r.film.length)} 米`}</dd>` : ''}
     ${r.net ? `<dt>維修網子</dt><dd>${esc(r.net.side)}</dd>` : ''}
-    ${[r.sLine && '更換 S 線', r.winch && '更換捲揚', r.blackRope && '更換黑繩'].filter(Boolean).length
-      ? `<dt>其他項目</dt><dd>${[r.sLine && '更換 S 線', r.winch && '更換捲揚', r.blackRope && '更換黑繩'].filter(Boolean).join('、')}</dd>` : ''}
+    ${r.winch ? `<dt>更換捲揚</dt><dd>${esc(winchSideOf(r.winch))}</dd>` : ''}
+    ${[r.sLine && '更換 S 線', r.blackRope && '更換黑繩'].filter(Boolean).length
+      ? `<dt>其他項目</dt><dd>${[r.sLine && '更換 S 線', r.blackRope && '更換黑繩'].filter(Boolean).join('、')}</dd>` : ''}
     ${r.other ? `<dt>其他</dt><dd>${esc(r.other)}</dd>` : ''}` : `
     <dt>尺寸</dt><dd>${buildingsText(c.buildings) || '—'}</dd>
     <dt>總面積</dt><dd>${fmt(area)} ㎡（${fmt(area / PING_M2)} 坪）</dd>

@@ -1,7 +1,7 @@
 // 引導式表單：一步一頁
 import { $, $$, esc, store, toast, fmt, num, totalArea, PING_M2, parseLatLng, needsResolve, extractUrl,
   compressImage, newCaseId, gmapUrl, workSummary, buildingsText,
-  SIDE_MATS, ROOF_MATS, normMaterials, materialsText } from './util.js';
+  NET_OPTS, FILM_OPTS, WINCH_SIDES, ROOF_MATS, normMaterials, materialsText, winchSideOf } from './util.js';
 import { sfx } from './sound.js';
 import { call, queueAdd } from './api.js';
 import { photoUrl } from './mapview.js';
@@ -22,10 +22,10 @@ function blank() {
     lat: null, lng: null, acc: null, address: '',
     customerName: '', phone: '', photos: [], keepPhotos: [],
     workType: '', buildings: [{ length: '', width: '', count: '' }],
-    materials: { side: [], roof: [] },
+    materials: { net: '', film: '', winchSide: '', roof: [] },
     existing: { length: '', width: '', count: '' },
     repair: { film: { on: false, arc: '', length: '', notMeasured: false }, net: { on: false, side: '' },
-      sLine: false, winch: false, blackRope: false, other: { on: false, text: '' } },
+      sLine: false, winch: false, winchSide: '', blackRope: false, other: { on: false, text: '' } },
     notes: '',
   };
 }
@@ -44,7 +44,7 @@ function fromCase(c) {
     s.repair = {
       film: { on: !!r.film, arc: r.film?.arc || '', length: r.film?.length || '', notMeasured: !!r.film?.notMeasured },
       net: { on: !!r.net, side: r.net?.side || '' },
-      sLine: !!r.sLine, winch: !!r.winch, blackRope: !!r.blackRope,
+      sLine: !!r.sLine, winch: !!r.winch, winchSide: winchSideOf(r.winch), blackRope: !!r.blackRope,
       other: { on: !!r.other, text: r.other || '' },
     };
   } else if (c.buildings && c.buildings.length) {
@@ -68,6 +68,9 @@ export function openForm(c = null, useDraft = false) {
   if (c) S = fromCase(c);
   else if (useDraft && hasDraft()) S = { ...blank(), ...hasDraft(), mode: 'new' };
   else { S = blank(); store.del(DRAFT_KEY); }
+  // 舊草稿（舊材料格式、捲揚沒位置）轉成新格式
+  S.materials = normMaterials(S.materials);
+  if (S.repair && S.repair.winch && !WINCH_SIDES.includes(S.repair.winchSide)) S.repair.winchSide = '兩側';
   S.step = 1;
   history.pushState({ v: 'form', step: 1 }, '');
   render();
@@ -359,15 +362,32 @@ function renderNew(box) {
     <div id="dim-rows"></div>
     <button class="btn block" id="add-row">＋ 再新增一種尺寸</button>
     <div class="total" id="total"></div>
-    <div class="lbl" style="margin-top:18px">四周材料（可複選）</div>
-    <div class="mat-grid">${Object.entries(SIDE_MATS).map(([k, v]) => matCheck('side', k, v)).join('')}</div>
-    <div class="lbl" style="margin-top:12px">屋頂材料（可複選）</div>
-    <div class="mat-grid">${Object.entries(ROOF_MATS).map(([k, v]) => matCheck('roof', k, v)).join('')}</div>`;
-  if (!S.materials) S.materials = { side: [], roof: [] };
+    <div class="lbl" style="margin-top:18px">四周材料（選填）</div>
+    <div class="muted" style="font-size:14px;margin-bottom:6px">通常兩層：網在內（固定）＋膜在外。再按一次可取消</div>
+    <div class="lbl">網（內層，單選）</div>
+    <div class="radio-row">${Object.entries(NET_OPTS).map(([k, v]) => optBtn('net', k, v, S.materials.net === k)).join('')}</div>
+    <div class="lbl" style="margin-top:10px">膜（外層，單選）</div>
+    <div class="radio-row">${Object.entries(FILM_OPTS).map(([k, v]) => optBtn('film', k, v, S.materials.film === k)).join('')}</div>
+    <div class="sub ${S.materials.film === 'winch' ? '' : 'hidden'}" id="sub-mwinch">
+      <div class="lbl">捲揚位置</div>
+      <div class="radio-row">${WINCH_SIDES.map(v => optBtn('winchSide', v, v, S.materials.winchSide === v)).join('')}</div>
+    </div>
+    <div class="lbl" style="margin-top:14px">屋頂材料（可複選）</div>
+    <div class="mat-grid">${Object.entries(ROOF_MATS).map(([k, v]) => matCheck(k, v)).join('')}</div>`;
+  $$('[data-opt]', box).forEach(b => b.onclick = () => {
+    sfx.beep();
+    const [g, v] = b.dataset.opt.split(':');
+    if (g === 'winchSide') S.materials.winchSide = v;
+    else S.materials[g] = S.materials[g] === v ? '' : v;   // 再按一次同一顆＝取消（材料是選填）
+    if (g === 'film') S.materials.winchSide = S.materials.film === 'winch' ? (S.materials.winchSide || '兩側') : '';
+    ['net', 'film', 'winchSide'].forEach(gr => $$(`[data-opt^="${gr}:"]`, box).forEach(x => x.classList.toggle('on', x.dataset.opt === `${gr}:${S.materials[gr]}`)));
+    $('#sub-mwinch').classList.toggle('hidden', S.materials.film !== 'winch');
+    saveDraft();
+  });
   $$('[data-mat]', box).forEach(cb => cb.onchange = () => {
     sfx.beep();
-    const [part, k] = cb.dataset.mat.split(':');
-    const list = S.materials[part] = (S.materials[part] || []).filter(x => x !== k);
+    const k = cb.dataset.mat;
+    const list = S.materials.roof = (S.materials.roof || []).filter(x => x !== k);
     if (cb.checked) list.push(k);
     cb.parentElement.classList.toggle('on', cb.checked);
     saveDraft();
@@ -395,9 +415,13 @@ function renderNew(box) {
   draw(); updateTotal();
 }
 
-function matCheck(part, k, label) {
-  const on = (S.materials?.[part] || []).includes(k);
-  return `<label class="check ${on ? 'on' : ''}"><input type="checkbox" data-mat="${part}:${k}" ${on ? 'checked' : ''}>${label}</label>`;
+function matCheck(k, label) {
+  const on = (S.materials?.roof || []).includes(k);
+  return `<label class="check ${on ? 'on' : ''}"><input type="checkbox" data-mat="${k}" ${on ? 'checked' : ''}>${label}</label>`;
+}
+
+function optBtn(group, val, label, on) {
+  return `<button type="button" class="btn ${on ? 'on' : ''}" data-opt="${group}:${val}">${label}</button>`;
 }
 
 function renderRepair(box) {
@@ -430,6 +454,10 @@ function renderRepair(box) {
 
     <label class="check ${r.sLine ? 'on' : ''}"><input type="checkbox" data-flag="sLine" ${r.sLine ? 'checked' : ''}>更換 S 線</label>
     <label class="check ${r.winch ? 'on' : ''}"><input type="checkbox" data-flag="winch" ${r.winch ? 'checked' : ''}>更換捲揚</label>
+    <div class="sub ${r.winch ? '' : 'hidden'}" id="sub-winch">
+      <div class="lbl">捲揚位置（滴水處以下）</div>
+      <div class="radio-row">${WINCH_SIDES.map(v => `<button type="button" class="btn ${r.winchSide === v ? 'on' : ''}" data-wside="${v}">${v}</button>`).join('')}</div>
+    </div>
     <label class="check ${r.blackRope ? 'on' : ''}"><input type="checkbox" data-flag="blackRope" ${r.blackRope ? 'checked' : ''}>更換黑繩</label>
 
     <label class="check ${r.other.on ? 'on' : ''}"><input type="checkbox" data-item="other" ${r.other.on ? 'checked' : ''}>其他</label>
@@ -457,6 +485,17 @@ function renderRepair(box) {
     sfx.beep();
     r[cb.dataset.flag] = cb.checked;
     cb.parentElement.classList.toggle('on', cb.checked);
+    if (cb.dataset.flag === 'winch') {
+      if (cb.checked && !r.winchSide) r.winchSide = '兩側';
+      $$('[data-wside]', box).forEach(x => x.classList.toggle('on', x.dataset.wside === r.winchSide));
+      $('#sub-winch').classList.toggle('hidden', !cb.checked);
+    }
+    saveDraft();
+  });
+  $$('[data-wside]', box).forEach(b => b.onclick = () => {
+    sfx.beep();
+    r.winchSide = b.dataset.wside;
+    $$('[data-wside]', box).forEach(x => x.classList.toggle('on', x === b));
     saveDraft();
   });
   $('#film-nm').onchange = e => { sfx.beep(); r.film.notMeasured = e.target.checked; e.target.parentElement.classList.toggle('on', e.target.checked); saveDraft(); };
@@ -502,7 +541,7 @@ function buildCase() {
     if (r.film.on) out.film = r.film.notMeasured ? { arc: num(r.film.arc), length: num(r.film.length), notMeasured: true } : { arc: num(r.film.arc), length: num(r.film.length), notMeasured: false };
     if (r.net.on) out.net = { side: r.net.side };
     if (r.sLine) out.sLine = true;
-    if (r.winch) out.winch = true;
+    if (r.winch) out.winch = { side: WINCH_SIDES.includes(r.winchSide) ? r.winchSide : '兩側' };
     if (r.blackRope) out.blackRope = true;
     if (r.other.on) out.other = r.other.text.trim();
     c.repair = out;

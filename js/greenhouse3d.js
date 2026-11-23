@@ -1,20 +1,46 @@
 // 溫室 3D 爆炸圖（案件卡片用）
-// Three.js 用 CDN（index.html 的 importmap），打開卡片時才載入；載不到或不支援 WebGL 就退回文字清單。
-import { esc, fmt, num, normMaterials, SIDE_MATS, ROOF_MATS } from './util.js';
+// 風格：寫實產品爆炸圖——零件沿各自軸線拉開懸浮、金屬質感、攝影棚柔光、淺灰白背景、地面淡陰影。
+// 結構尺寸照鹿野報價引擎（00_報價引擎/specs/drawing-sketchup.md，Oscar 提供）：
+//   滴水高＝立柱 2.0＋(腳長−插入 0.10)，拱頂是真圓弧，拱距 0.75，固定壓板（S 線）位置、門 1.2×2.0。
+// Three.js 用 CDN（index.html 的 importmap），打開卡片才載入；載不到或不支援 WebGL 就退回文字清單。
+import { esc, fmt, num, normMaterials, NET_OPTS, ROOF_MATS, winchSideOf } from './util.js';
 import { sfx } from './sound.js';
 
-const SHOULDER_H = 2.5;   // 滴水處（肩部）高度，米（示意）
-const FILM_DROP = 0.3;    // 農膜包到滴水處下 0.3 米（DECISIONS 弧長更正）
+const POST_H = 2.0;      // 立柱高（常見）
+const FILM_DROP = 0.3;   // 屋頂農膜包到滴水處下 0.3 米（DECISIONS 弧長更正）
+const HOOP_GAP = 0.75;   // 拱距
 const DEF = { length: 24, width: 8 };
 
-// 顏色
+// 跨距 → [滴水高比立柱多多少, 起拱高]（報價引擎定案值）
+const SPAN_TABLE = [
+  [5, 0.20, 0.876], [5.5, 0.05, 1.475], [6, 0.05, 1.455], [7, 0.20, 1.97],
+  [7.5, 0.20, 2.039], [8, 0.19, 2.12], [9, 0.70, 1.78], [10, 0.20, 1.862],
+];
+export function spanGeo(W) {
+  const T = SPAN_TABLE;
+  if (W <= T[0][0]) return { eave: POST_H + T[0][1], rise: T[0][2] * W / T[0][0] };
+  const last = T[T.length - 1];
+  if (W >= last[0]) return { eave: POST_H + last[1], rise: last[2] * W / last[0] };
+  for (let i = 0; i < T.length - 1; i++) {
+    const a = T[i], b = T[i + 1];
+    if (W >= a[0] && W <= b[0]) {
+      // 落在表上的寬度用表值；中間的取最近的那一格（滴水高）＋線性內插（起拱高）
+      const t = (W - a[0]) / (b[0] - a[0]);
+      const near = t < 0.5 ? a : b;
+      return { eave: POST_H + near[1], rise: a[2] + (b[2] - a[2]) * t };
+    }
+  }
+  return { eave: 2.2, rise: W * 0.25 };
+}
+
+// 顏色／材質
 const C = {
-  frame: 0x9fb3cc,
-  ghost: 0x5b6b86,
-  hot: 0xffb020,
-  roof: { film: 0xbfe9ff, canvas: 0xf5c26b, knitNet: 0xc39bff, shade: 0x35c47a },
-  side: { blackNet: 0x9aa3b5, insectNet: 0xe6f4ff, film: 0xbfe9ff, winch: 0x6fc8ff },
-  sLine: 0xff8a3d, rope: 0xd0d6e0, tube: 0xffd43b,
+  steel: 0xa7aeb8,      // 鍍鋅鋼管
+  alu: 0xe3e7ec,        // 鋁壓板
+  hot: 0xff7a00,
+  film: 0x8cc3ea, canvas: 0xd2c19c, knitNet: 0xe4e8e6, shade: 0x2f5a40,
+  blackNet: 0x1c2025, insectNet: 0xaebdc8, winchFilm: 0x9fcdee,
+  rope: 0x1d1f22, door: 0x9aa3ad, crank: 0x3a3f46,
 };
 const hex = n => '#' + n.toString(16).padStart(6, '0');
 
@@ -25,28 +51,42 @@ export function describe(c) {
   const sized = !!big;
   const W = sized ? num(big.width) : DEF.width;
   const Lreal = sized ? num(big.length) : DEF.length;
-  const L = Math.min(Lreal, W * 5);               // 太長的溫室縮短顯示，不然手機上看不到細節
+  const L = Math.min(Lreal, W * 2.5);               // 太長的溫室縮短顯示，不然手機上看不到細節
   const count = sized ? Math.max(1, Math.round(num(big.count)) || 1) : 1;
+  const g = spanGeo(W);
   let note = sized ? `示意：${fmt(Lreal)}米 × ${fmt(W)}米${count > 1 ? `　×${count} 棟` : ''}` : '尺寸未填，示意';
   if (sized && list.length > 1) note += `（共 ${list.length} 種尺寸，畫最大的）`;
   if (L < Lreal) note += '・長度縮短顯示';
+  note += `・滴水 ${fmt(g.eave)}米 棟高 ${fmt(g.eave + g.rise)}米`;
 
-  const parts = [];      // { key, label, kind, hot }
   if (c.workType === 'repair') {
     const r = c.repair || {};
     const net = r.net ? r.net.side : '';
-    parts.push({ key: 'roof:film', label: '農膜', hot: !!r.film });
-    parts.push({ key: 'net:long', label: '網子（兩側）', hot: net === '兩側' || net === '四周' });
-    parts.push({ key: 'net:end', label: '網子（前後）', hot: net === '前後' || net === '四周' });
-    parts.push({ key: 'winch', label: '捲揚', hot: !!r.winch });
-    parts.push({ key: 'sLine', label: 'S 線（卡膜槽）', hot: !!r.sLine });
-    parts.push({ key: 'rope', label: '黑繩（壓膜繩）', hot: !!r.blackRope });
-    return { mode: 'repair', W, L, note, parts, other: r.other || '' };
+    const ws = winchSideOf(r.winch);
+    const hot = {
+      roofFilm: !!r.film,
+      netLong: net === '兩側' || net === '四周',
+      netEnd: net === '前後' || net === '四周',
+      winchLong: ws === '兩側' || ws === '四周',
+      winchEnd: ws === '前後' || ws === '四周',
+      sLine: !!r.sLine,
+      rope: !!r.blackRope,
+    };
+    const items = [];
+    if (hot.roofFilm) items.push('農膜（屋頂到滴水處下 0.3 米）');
+    if (net) items.push(`網子（${net}）`);
+    if (ws) items.push(`捲揚（${ws}）`);
+    if (hot.sLine) items.push('S 線（固定壓板）');
+    if (hot.rope) items.push('黑繩（壓膜繩）');
+    return { mode: 'repair', W, L, note, g, hot, items, other: r.other || '' };
   }
   const m = normMaterials(c.materials);
-  m.roof.forEach(k => parts.push({ key: 'roof:' + k, label: '屋頂 ' + ROOF_MATS[k], hot: true }));
-  m.side.forEach(k => parts.push({ key: 'side:' + k, label: '四周 ' + SIDE_MATS[k], hot: true }));
-  return { mode: 'new', W, L, note, parts, empty: !m.roof.length && !m.side.length };
+  const items = [];
+  m.roof.forEach(k => items.push({ key: k, label: '屋頂 ' + ROOF_MATS[k], color: C[k] }));
+  if (m.net && m.net !== 'none') items.push({ key: m.net, label: '四周 ' + NET_OPTS[m.net] + '（內）', color: C[m.net] });
+  if (m.film === 'fixed') items.push({ key: 'film', label: '四周 農膜（外，固定）', color: C.film });
+  if (m.film === 'winch') items.push({ key: 'winch', label: `捲揚（${m.winchSide}）`, color: C.winchFilm });
+  return { mode: 'new', W, L, note, g, m, items, empty: !m.roof.length && !m.net && !m.film };
 }
 
 // ───────── 掛到卡片上 ─────────
@@ -68,11 +108,15 @@ export function mountGreenhouse(box, c) {
 
   if (!webglOk()) { fallback(stage, d, '這支手機不支援 3D，改用清單'); return { dispose() {} }; }
   const timer = setTimeout(() => { if (!viewer && !dead) fallback(stage, d, '3D 載入太久（訊號不好？），改用清單'); }, 12000);
-  Promise.all([import('three'), import('three/addons/controls/OrbitControls.js')])
-    .then(([THREE, { OrbitControls }]) => {
+  Promise.all([
+    import('three'),
+    import('three/addons/controls/OrbitControls.js'),
+    import('three/addons/environments/RoomEnvironment.js'),
+  ])
+    .then(([THREE, { OrbitControls }, { RoomEnvironment }]) => {
       clearTimeout(timer);
       if (dead || !stage.isConnected) return;
-      try { viewer = createViewer(THREE, OrbitControls, stage, d); }
+      try { viewer = createViewer(THREE, OrbitControls, RoomEnvironment, stage, d); }
       catch (e) { console.error(e); fallback(stage, d, '3D 畫不出來，改用清單'); }
     })
     .catch(e => { clearTimeout(timer); console.warn(e); if (!dead) fallback(stage, d, '3D 載入失敗（沒訊號？），改用清單'); });
@@ -87,110 +131,165 @@ function webglOk() {
 
 function legendHtml(d) {
   if (d.mode === 'repair') {
-    const hot = d.parts.filter(p => p.hot);
-    return `<div class="gh3d-li"><i style="background:${hex(C.hot)};box-shadow:0 0 8px ${hex(C.hot)}"></i>亮起來＝要換／要修</div>
-      <div class="gh3d-li"><i style="background:${hex(C.ghost)}"></i>灰色＝現有，不動</div>
-      <div class="gh3d-items">${hot.map(p => `<span class="hot">${esc(p.label)}</span>`).join('') || '<span class="muted">沒有可畫的項目</span>'}
+    return `<div class="gh3d-li"><i style="background:${hex(C.hot)};box-shadow:0 0 8px ${hex(C.hot)}"></i>亮橘色＝要換／要修</div>
+      <div class="gh3d-li"><i style="background:#9aa3ad;opacity:.6"></i>淡色＝現有，不動</div>
+      <div class="gh3d-items">${d.items.map(t => `<span class="hot">${esc(t)}</span>`).join('') || '<span class="muted">沒有可畫的項目</span>'}
       ${d.other ? `<span class="hot">其他：${esc(d.other)}</span>` : ''}</div>`;
   }
-  if (d.empty) return '<div class="muted">新建材料還沒選（修改案件資料可補）</div>';
-  return d.parts.map(p => {
-    const [g, k] = p.key.split(':');
-    const col = g === 'roof' ? C.roof[k] : C.side[k];
-    return `<div class="gh3d-li"><i style="background:${hex(col)}"></i>${esc(p.label)}</div>`;
-  }).join('') + `<div class="gh3d-li"><i style="background:${hex(C.frame)}"></i>骨架</div>`;
+  const base = `<div class="gh3d-li"><i style="background:${hex(C.steel)}"></i>鍍鋅骨架</div>
+    <div class="gh3d-li"><i style="background:${hex(C.alu)};border:1px solid #889"></i>固定壓板（S 線）</div>`;
+  if (d.empty) return base + '<div class="muted" style="width:100%">新建材料還沒選（修改案件資料可補）</div>';
+  return d.items.map(p => `<div class="gh3d-li"><i style="background:${hex(p.color)};border:1px solid #556"></i>${esc(p.label)}</div>`).join('') + base;
 }
 
 function fallback(stage, d, why) {
   const items = d.mode === 'repair'
-    ? d.parts.filter(p => p.hot).map(p => p.label).concat(d.other ? ['其他：' + d.other] : [])
-    : d.parts.map(p => p.label);
+    ? d.items.concat(d.other ? ['其他：' + d.other] : [])
+    : d.items.map(p => p.label);
   stage.classList.add('flat');
   stage.innerHTML = `<div class="gh3d-fallback"><div class="muted">${esc(why)}</div>
     <ul>${items.map(t => `<li>${esc(t)}</li>`).join('') || '<li class="muted">沒有項目</li>'}</ul></div>`;
 }
 
 // ───────── Three.js 場景 ─────────
-function createViewer(THREE, OrbitControls, stage, d) {
+function createViewer(THREE, OrbitControls, RoomEnvironment, stage, d) {
   const { W, L } = d;
-  const H = SHOULDER_H;
-  const rise = Math.min(Math.max(W * 0.22, 1), 2.2);   // 拱高
-  const s = Math.max(W, L * 0.35, 5) / 7;              // 爆開距離跟著溫室大小走
+  const H = d.g.eave, rise = d.g.rise;
+  const R = (W * W) / (8 * rise) + rise / 2;       // 拱半徑
+  const cy = H + rise - R;                          // 圓心高度
+  const th0 = Math.asin(Math.min(1, (W / 2) / R));  // 半角
+  const s = Math.max(W, L * 0.35, 5) / 7;           // 爆開距離跟著溫室大小走
+  const isRepair = d.mode === 'repair';
+  const hot = d.hot || {};
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
+  // ── renderer：攝影棚風格 ──
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.88;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const canvas = renderer.domElement;
+  stage.classList.add('studio');
   stage.prepend(canvas);
   stage.querySelector('.gh3d-msg').remove();
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000);
-  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x0b1220, 1.1));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-  sun.position.set(W, H + 12, L * 0.6);
-  scene.add(sun);
 
   const disposables = [];
   const keep = o => { disposables.push(o); return o; };
 
-  // 地面格線
-  const grid = new THREE.GridHelper(Math.max(W, L) * 2.2, 22, 0x1f6f8b, 0x16304a);
-  grid.material.transparent = true; grid.material.opacity = 0.5;
-  keep(grid.geometry); keep(grid.material);
-  scene.add(grid);
+  const scene = new THREE.Scene();
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+  keep(envRT); pmrem.dispose();
+  scene.environment = envRT.texture;              // 金屬反光靠環境貼圖
+  const span = Math.max(W, L);
+  scene.fog = new THREE.Fog(0xe9ecef, span * 2.2, span * 6);   // 遠處淡出，有景深感
 
-  // 網子用的格紋貼圖
-  const gridTex = (() => {
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 2000);
+
+  // 打光：環境光＋柔和主光（投影）＋補光
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xc9cfd6, 0.4));
+  const key = new THREE.DirectionalLight(0xffffff, 1.6);
+  key.position.set(W * 0.9 + 6, H + rise + span * 0.9, L * 0.5 + 4);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  const sc = key.shadow.camera, ext = span * 0.9 + 6;
+  sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.near = 0.5; sc.far = span * 4 + 40;
+  key.shadow.bias = -0.0005; key.shadow.radius = 4;
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0xe8f0ff, 0.45);
+  fill.position.set(-W - 6, H + 4, -L * 0.4);
+  scene.add(fill);
+
+  // 地面：只接陰影（背景是 CSS 淺灰漸層）
+  const ground = new THREE.Mesh(keep(new THREE.PlaneGeometry(span * 8, span * 8)), keep(new THREE.ShadowMaterial({ opacity: 0.16 })));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+  scene.add(ground);
+
+  // ── 材質 ──
+  const hotMats = [];
+  const netTex = (fine, dark) => {
     const cv = document.createElement('canvas'); cv.width = cv.height = 32;
     const g = cv.getContext('2d');
-    g.fillStyle = 'rgba(255,255,255,.18)'; g.fillRect(0, 0, 32, 32);
-    g.strokeStyle = '#fff'; g.lineWidth = 3; g.strokeRect(0, 0, 32, 32);
+    g.clearRect(0, 0, 32, 32);
+    g.fillStyle = dark ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.16)'; g.fillRect(0, 0, 32, 32);
+    g.strokeStyle = '#fff'; g.lineWidth = fine ? 2 : 4; g.strokeRect(0, 0, 32, 32);
     const t = new THREE.CanvasTexture(cv);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = 4;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; t.colorSpace = THREE.SRGBColorSpace;
     return keep(t);
-  })();
+  };
+  const TEX = { coarse: netTex(false, true), fine: netTex(true, false) };
 
-  const isRepair = d.mode === 'repair';
-  const hotSet = new Set(d.parts.filter(p => p.hot).map(p => p.key));
-  const hotMats = [];
-
-  function surfMat(color, opacity, net, hot) {
+  // isHot：維修要換的；dim：維修時現有、不動的（寫實但淡）
+  function mat(kind, isHot = false) {
+    const dim = isRepair && !isHot;
     let m;
-    if (isRepair) {
-      m = new THREE.MeshStandardMaterial({
-        color: hot ? C.hot : C.ghost, emissive: hot ? C.hot : 0x000000, emissiveIntensity: hot ? 0.6 : 0,
-        transparent: true, opacity: hot ? 0.75 : 0.1, side: THREE.DoubleSide, depthWrite: false,
-        roughness: 0.6, metalness: 0,
-      });
-      if (hot) hotMats.push(m);
-    } else {
-      m = new THREE.MeshStandardMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, roughness: 0.7, metalness: 0 });
+    if (isHot) {
+      m = new THREE.MeshStandardMaterial({ color: C.hot, emissive: C.hot, emissiveIntensity: 0.5, roughness: 0.45, metalness: 0.1,
+        transparent: kind.surface, opacity: kind.surface ? 0.85 : 1, side: THREE.DoubleSide, depthWrite: !kind.surface });
+      if (kind.net) { m.map = kind.net === 'fine' ? TEX.fine : TEX.coarse; }
+      hotMats.push(m);
+      return keep(m);
     }
-    if (net) { m.map = gridTex; m.alphaMap = null; }
+    const p = { color: kind.color, roughness: kind.rough ?? 0.5, metalness: kind.metal ?? 0, side: THREE.DoubleSide };
+    if (kind.surface) Object.assign(p, { transparent: true, opacity: kind.opacity ?? 0.6, depthWrite: false });
+    if (kind.net) p.map = kind.net === 'fine' ? TEX.fine : TEX.coarse;
+    m = new THREE.MeshStandardMaterial(p);
+    if (dim) { m.transparent = true; m.opacity = (kind.surface ? (kind.opacity ?? 0.6) : 1) * 0.35; m.depthWrite = false; }
     return keep(m);
   }
-  function lineMat(color, hot) {
-    const m = new THREE.MeshStandardMaterial(isRepair
-      ? { color: hot ? C.hot : C.ghost, emissive: hot ? C.hot : 0, emissiveIntensity: hot ? 0.8 : 0, transparent: !hot, opacity: hot ? 1 : 0.25 }
-      : { color, roughness: 0.5, metalness: 0.3 });
-    if (isRepair && hot) hotMats.push(m);
-    return keep(m);
-  }
+  const K = {
+    steel: { color: C.steel, metal: 0.9, rough: 0.32 },
+    alu: { color: C.alu, metal: 0.85, rough: 0.22 },
+    film: { color: C.film, surface: true, opacity: 0.42, rough: 0.08 },
+    winchFilm: { color: C.winchFilm, surface: true, opacity: 0.4, rough: 0.1 },
+    canvas: { color: C.canvas, surface: true, opacity: 0.92, rough: 0.9 },
+    knitNet: { color: C.knitNet, surface: true, opacity: 0.85, rough: 0.85, net: 'coarse' },
+    shade: { color: C.shade, surface: true, opacity: 0.88, rough: 0.85, net: 'fine' },
+    blackNet: { color: C.blackNet, surface: true, opacity: 0.8, rough: 0.8, net: 'coarse' },
+    insectNet: { color: C.insectNet, surface: true, opacity: 0.7, rough: 0.8, net: 'fine' },
+    rope: { color: C.rope, rough: 0.7 },
+    door: { color: C.door, metal: 0.7, rough: 0.35 },
+    crank: { color: C.crank, metal: 0.5, rough: 0.4 },
+  };
+  const steelMat = mat(K.steel, false);
+  // 骨架在維修模式也保持實色（是參考基準），只把「要換的」打亮
+  steelMat.transparent = false; steelMat.opacity = 1; steelMat.depthWrite = true;
 
-  // 拱形剖面：x 從 -W/2 到 W/2，d＝往外偏移
-  const ARC_N = 24;
-  const archPts = (off = 0) => {
-    const a = W / 2 + off, b = rise + off, pts = [];
-    for (let i = 0; i <= ARC_N; i++) { const t = Math.PI - (i / ARC_N) * Math.PI; pts.push([a * Math.cos(t), H + b * Math.sin(t)]); }
+  // ── 幾何工具 ──
+  // 拱上的點（往外偏移 off）：θ 從左到右
+  const ARC_N = 28;
+  const arcPts = (off = 0) => {
+    const pts = [];
+    for (let i = 0; i <= ARC_N; i++) {
+      const t = -th0 + (2 * th0 * i) / ARC_N;
+      pts.push([(R + off) * Math.sin(t), cy + (R + off) * Math.cos(t)]);
+    }
     return pts;
   };
-  // 屋頂膜剖面：一側滴水處下 0.3 米 → 拱 → 另一側
+  const arcLen = 2 * th0 * R;
+  // 屋頂膜剖面：左側滴水下 0.3 → 拱 → 右側滴水下 0.3
   const roofProfile = off => {
-    const arc = archPts(off);
-    return [[arc[0][0], H - FILM_DROP], ...arc, [arc[arc.length - 1][0], H - FILM_DROP]];
+    const a = arcPts(off);
+    return [[a[0][0], H - FILM_DROP], ...a, [a[a.length - 1][0], H - FILM_DROP]];
   };
-  // 沿長度方向掃出曲面，uv 用米（網格貼圖密度才對）
+  // 端面外形（地面 → 牆 → 拱）
+  function endShape(withDoor) {
+    const sh = new THREE.Shape();
+    sh.moveTo(-W / 2, 0); sh.lineTo(W / 2, 0);
+    arcPts(0).slice().reverse().forEach(p => sh.lineTo(p[0], p[1]));
+    sh.lineTo(-W / 2, 0);
+    if (withDoor) {
+      const [x0, x1] = doorX;
+      const h = new THREE.Path();
+      h.moveTo(x0, 0.1); h.lineTo(x1, 0.1); h.lineTo(x1, 2.1); h.lineTo(x0, 2.1); h.lineTo(x0, 0.1);
+      sh.holes.push(h);
+    }
+    return sh;
+  }
+  // 沿長度方向掃出曲面；uv 以米計
   function sweep(pts, len, cell = 1) {
     const pos = [], uv = [], idx = [];
     let acc = 0;
@@ -211,162 +310,250 @@ function createViewer(THREE, OrbitControls, stage, d) {
     for (let i = 0; i < a.count; i++) a.setXY(i, a.getX(i) * su, a.getY(i) * sv);
     return g;
   }
-  // 沿折線的管子
-  function tubeAlong(pts3, r) {
+  function tubePath(pts3, r, radial = 8) {
     const path = new THREE.CurvePath();
     for (let i = 0; i < pts3.length - 1; i++) path.add(new THREE.LineCurve3(pts3[i], pts3[i + 1]));
-    return keep(new THREE.TubeGeometry(path, Math.max(8, pts3.length * 2), r, 6, false));
+    return keep(new THREE.TubeGeometry(path, Math.max(8, pts3.length * 2), r, radial, false));
   }
-  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const cylCache = {};
+  function bar(a, b, r, m, parent) {
+    const len = a.distanceTo(b);
+    const k = r.toFixed(3);
+    const g = cylCache[k] || (cylCache[k] = keep(new THREE.CylinderGeometry(r, r, 1, 8)));
+    const mesh = new THREE.Mesh(g, m);
+    mesh.scale.set(1, len, 1);
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(V(0, 1, 0), b.clone().sub(a).normalize());
+    mesh.castShadow = true;
+    parent.add(mesh);
+    return mesh;
+  }
+  // 面板加細邊線，零件輪廓才看得清楚（像產品爆炸圖）
+  const edgeMat = keep(new THREE.LineBasicMaterial({ color: 0x6f7c88, transparent: true, opacity: isRepair ? 0.35 : 0.8 }));
+  const edgeHot = keep(new THREE.LineBasicMaterial({ color: 0xff7a00 }));
+  function outline(mesh, isHot) {
+    const eg = keep(new THREE.EdgesGeometry(mesh.geometry, 25));
+    mesh.add(new THREE.LineSegments(eg, isHot ? edgeHot : edgeMat));
+    return mesh;
+  }
+  function plateBar(a, b, m, parent) {          // 壓板：扁長方條
+    const len = a.distanceTo(b);
+    const g = cylCache.plate || (cylCache.plate = keep(new THREE.BoxGeometry(0.06, 1, 0.025)));
+    const mesh = new THREE.Mesh(g, m);
+    mesh.scale.set(1, len, 1);
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(V(0, 1, 0), b.clone().sub(a).normalize());
+    mesh.castShadow = true;
+    parent.add(mesh);
+    return mesh;
+  }
 
-  // 部件：{ obj, base, ex（爆開位移）, label, anchor（標籤位置，相對 obj） }
+  // 門：前端面（+z），偏左（照報價引擎 6m 跨：門柱 1.10／2.40）
+  const doorX = W >= 4 ? [-W / 2 + 1.15, -W / 2 + 2.35] : [-0.6, 0.6];
+
+  // 部件：{ obj, base, ex（爆開位移）, label, anchor（合起時標籤位置）, hot }
   const parts = [];
-  function addPart(obj, ex, label, anchor, hot) {
+  function addPart(obj, ex, label, anchor, isHot) {
     scene.add(obj);
-    parts.push({ obj, ex, label, anchor, hot, el: null });
+    parts.push({ obj, ex, label, anchor, hot: !!isHot, el: null });
   }
 
-  // ── 骨架（固定不動） ──
-  const hoopN = Math.min(31, Math.max(4, Math.round(L / 2) + 1));
-  const hoopPath = [V(-W / 2, 0, 0), ...archPts(0).map(p => V(p[0], p[1], 0)), V(W / 2, 0, 0)];
-  const hoopGeo = tubeAlong(hoopPath, 0.05);
-  const frameMat = keep(new THREE.MeshStandardMaterial({ color: isRepair ? 0x8796ad : C.frame, roughness: 0.4, metalness: 0.6 }));
-  const hoops = new THREE.InstancedMesh(hoopGeo, frameMat, hoopN);
+  // ── 骨架（居中不動）：彎管＋立柱、屋頂桁條、兩側滴水下 0.2 橫桿、裙桿、端面立柱、門楣 ──
+  const hoopN = Math.max(4, Math.round(L / HOOP_GAP) + 1);
+  const zAt = i => -L / 2 + (L * i) / (hoopN - 1);
+  const hoopPath = [V(-W / 2, 0, 0), V(-W / 2, H, 0), ...arcPts(0).map(p => V(p[0], p[1], 0)), V(W / 2, H, 0), V(W / 2, 0, 0)];
+  const hoops = new THREE.InstancedMesh(tubePath(hoopPath, 0.024, 8), steelMat, hoopN);
   const mtx = new THREE.Matrix4();
-  for (let i = 0; i < hoopN; i++) { mtx.makeTranslation(0, 0, -L / 2 + (L * i) / (hoopN - 1)); hoops.setMatrixAt(i, mtx); }
+  for (let i = 0; i < hoopN; i++) { mtx.makeTranslation(0, 0, zAt(i)); hoops.setMatrixAt(i, mtx); }
+  hoops.castShadow = true;
   scene.add(hoops);
   const frame = new THREE.Group();
-  const purlinGeo = keep(new THREE.CylinderGeometry(0.04, 0.04, L, 6));
-  purlinGeo.rotateX(Math.PI / 2);
-  [0, 6, 12, 18, 24].map(i => archPts(0)[i]).concat([[-W / 2, 0], [W / 2, 0]]).forEach(p => {
-    const m = new THREE.Mesh(purlinGeo, frameMat); m.position.set(p[0], p[1], 0); frame.add(m);
+  const purlinN = Math.max(3, Math.round(arcLen / 1.35));        // 8m 跨約 7 道
+  for (let i = 0; i < purlinN; i++) {
+    const t = -th0 + (2 * th0 * (i + 0.5)) / purlinN;
+    const x = R * Math.sin(t), y = cy + R * Math.cos(t);
+    bar(V(x, y, -L / 2), V(x, y, L / 2), 0.014, steelMat, frame);
+  }
+  [-1, 1].forEach(sg => {
+    bar(V(sg * W / 2, H - 0.2, -L / 2), V(sg * W / 2, H - 0.2, L / 2), 0.014, steelMat, frame);   // 滴水下 0.2
+    bar(V(sg * W / 2, 0.2, -L / 2), V(sg * W / 2, 0.2, L / 2), 0.014, steelMat, frame);           // 裙桿
+  });
+  // 端面：滴水高水平桿＋立柱（前面有門）
+  const endPostsX = (withDoor) => {
+    const xs = [];
+    if (withDoor) {
+      xs.push(doorX[0] - 0.05, doorX[1] + 0.05);
+      for (let x = doorX[1] + 1.8; x < W / 2 - 0.6; x += 1.8) xs.push(x);
+    } else {
+      const n = Math.max(1, Math.round(W / 1.5) - 1);
+      for (let i = 1; i <= n; i++) xs.push(-W / 2 + (W * i) / (n + 1));
+    }
+    return xs;
+  };
+  const archYAt = x => cy + Math.sqrt(Math.max(0, R * R - x * x));
+  [-1, 1].forEach(sz => {
+    const z = sz * L / 2;
+    bar(V(-W / 2, H, z), V(W / 2, H, z), 0.016, steelMat, frame);
+    endPostsX(sz > 0).forEach(x => bar(V(x, 0, z), V(x, archYAt(x), z), 0.02, steelMat, frame));
+    if (sz > 0) bar(V(doorX[0] - 0.05, 2.12, z), V(doorX[1] + 0.05, 2.12, z), 0.02, steelMat, frame);   // 門楣
   });
   scene.add(frame);
 
-  // ── 屋頂 ──
-  let roofTop = H + rise;
-  const roofLayers = isRepair ? ['film'] : d.parts.filter(p => p.key.startsWith('roof:')).map(p => p.key.slice(5));
-  roofLayers.forEach((k, i) => {
-    const net = k === 'knitNet' || k === 'shade';
-    const off = 0.06 + i * 0.05;
-    const hot = isRepair ? hotSet.has('roof:film') : true;
-    const g = sweep(roofProfile(off), L, net ? (k === 'shade' ? 0.2 : 0.3) : 1);
-    const mesh = new THREE.Mesh(g, surfMat(C.roof[k], k === 'film' ? 0.35 : net ? 0.85 : 0.8, net, hot));
-    const exY = (1.6 + i * 1.6) * s;
-    roofTop = H + rise + exY;
-    addPart(mesh, V(0, exY, 0), isRepair ? '農膜' : '屋頂 ' + ROOF_MATS[k], V(0, H + rise + off, L * (0.2 - i * 0.3)), hot);
-  });
-
-  // ── 四周 ──
-  const sideLayers = isRepair ? [] : d.parts.filter(p => p.key.startsWith('side:')).map(p => p.key.slice(5));
-  // 網／膜由內往外排：黑網、防蟲網、農膜、捲揚
-  const order = ['blackNet', 'insectNet', 'film', 'winch'];
-  sideLayers.sort((a, b) => order.indexOf(a) - order.indexOf(b));
-
-  function sidePanels(kind, color, net, cell, hot, opts) {
-    // opts: { long: true/false, end: true/false, top: 滴水處以下多高, layer }
-    const out = [];
-    const top = opts.top;
-    const off = 0.08 + opts.layer * 0.06;
-    const exOut = (1.5 + opts.layer * 1.3) * s;
-    if (opts.long) {
-      [-1, 1].forEach(sgn => {
-        const g = scaleUV(new THREE.PlaneGeometry(L, top), L / cell, top / cell);
-        keep(g); g.rotateY(Math.PI / 2);
-        const m = new THREE.Mesh(g, surfMat(color, net ? 0.9 : 0.4, net, hot));
-        m.position.set(sgn * (W / 2 + off), top / 2, 0);
-        out.push({ obj: m, ex: V(sgn * exOut, 0, 0), anchor: V(sgn * (W / 2 + off), top * 0.55, L * (0.3 - opts.layer * 0.25)), side: sgn });
+  // ── 固定壓板（S 線）：兩長邊滴水高＋離地 0.2；端面頭尾彎管外緣（拱＋兩側直段）＋橫向三道（遇門斷開） ──
+  {
+    const isHot = !!hot.sLine;
+    const pm = mat(K.alu, isHot);
+    const out = 0.05;
+    [-1, 1].forEach(sg => {
+      const grp = new THREE.Group();
+      [H, 0.2].forEach(y => plateBar(V(sg * (W / 2 + out), y, -L / 2), V(sg * (W / 2 + out), y, L / 2), pm, grp));
+      addPart(grp, V(sg * 1.0 * s, 0, 0), sg > 0 ? (isRepair ? 'S 線（壓板）' : '固定壓板') : '', V(sg * (W / 2 + out), H, L * 0.25), isHot);
+    });
+    [-1, 1].forEach(sz => {
+      const grp = new THREE.Group();
+      const z = sz * (L / 2 + out);
+      const a = arcPts(0.03);
+      const edge = [V(-W / 2 - 0.03, 0, z), V(-W / 2 - 0.03, H, z), ...a.map(p => V(p[0], p[1], z)), V(W / 2 + 0.03, H, z), V(W / 2 + 0.03, 0, z)];
+      for (let i = 0; i < edge.length - 1; i++) plateBar(edge[i], edge[i + 1], pm, grp);
+      const ys = [H - 0.2, (H - 0.2 + 0.2) / 2, 0.2];
+      ys.forEach(y => {
+        if (sz > 0 && y < 2.1) {   // 門洞斷開
+          plateBar(V(-W / 2, y, z), V(doorX[0], y, z), pm, grp);
+          plateBar(V(doorX[1], y, z), V(W / 2, y, z), pm, grp);
+        } else plateBar(V(-W / 2, y, z), V(W / 2, y, z), pm, grp);
       });
-    }
-    if (opts.end) {
-      const shape = new THREE.Shape();
-      const arc = archPts(0);
-      shape.moveTo(-W / 2, 0); shape.lineTo(W / 2, 0);
-      arc.slice().reverse().forEach(p => shape.lineTo(p[0], p[1]));
-      shape.lineTo(-W / 2, 0);
-      const g = keep(new THREE.ShapeGeometry(shape, 8));
-      scaleUV(g, 1 / cell, 1 / cell);
-      [-1, 1].forEach(sgn => {
-        const m = new THREE.Mesh(g, surfMat(color, net ? 0.9 : 0.4, net, hot));
-        m.position.set(0, 0, sgn * (L / 2 + off));
-        out.push({ obj: m, ex: V(0, 0, sgn * exOut), anchor: V(W * 0.2, H * 0.6, sgn * (L / 2 + off)), side: sgn, end: true });
-      });
-    }
-    return out;
-  }
-
-  // 捲揚：側邊捲揚膜（滴水處以下）＋捲揚管＋手搖器
-  function winchGroup(sgn, hot, layer) {
-    const grp = new THREE.Group();
-    const off = 0.1 + layer * 0.06;
-    const top = H - 0.15;
-    const g = scaleUV(new THREE.PlaneGeometry(L, top - 0.5), 1, 1); keep(g); g.rotateY(Math.PI / 2);
-    const film = new THREE.Mesh(g, surfMat(C.side.winch, 0.45, false, hot));
-    film.position.set(0, 0.5 + (top - 0.5) / 2, 0);
-    grp.add(film);
-    const tg = keep(new THREE.CylinderGeometry(0.07, 0.07, L + 0.6, 10)); tg.rotateX(Math.PI / 2);
-    const tube = new THREE.Mesh(tg, lineMat(C.tube, hot));
-    tube.position.set(0.05, 0.5, 0.3);
-    grp.add(tube);
-    const crank = new THREE.Mesh(keep(new THREE.BoxGeometry(0.25, 0.35, 0.25)), lineMat(C.tube, hot));
-    crank.position.set(0.1, 0.9, L / 2 + 0.5);
-    const rod = new THREE.Mesh(keep(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6)), lineMat(C.tube, hot));
-    rod.position.set(0.1, 0.65, L / 2 + 0.5);
-    grp.add(crank, rod);
-    grp.position.set(sgn * (W / 2 + off), 0, 0);
-    return grp;
-  }
-
-  if (isRepair) {
-    // 網子：兩側／前後
-    const hl = hotSet.has('net:long'), he = hotSet.has('net:end');
-    sidePanels('net', C.side.blackNet, true, 0.3, hl, { long: true, end: false, top: H - FILM_DROP, layer: 0 })
-      .forEach((p, i) => addPart(p.obj, p.ex, i === 1 ? '網子（兩側）' : '', p.anchor, hl));
-    sidePanels('net', C.side.blackNet, true, 0.3, he, { long: false, end: true, top: H, layer: 0 })
-      .forEach((p, i) => addPart(p.obj, p.ex, i === 1 ? '網子（前後）' : '', p.anchor, he));
-    const hw = hotSet.has('winch');
-    [-1, 1].forEach(sgn => addPart(winchGroup(sgn, hw, 1), V(sgn * 2.8 * s, 0, 0), sgn > 0 ? '捲揚' : '', V(sgn * W / 2, 1.2, -L * 0.15), hw));
-  } else {
-    sideLayers.forEach((k, i) => {
-      if (k === 'winch') {
-        [-1, 1].forEach(sgn => addPart(winchGroup(sgn, true, i), V(sgn * (1.5 + i * 1.3) * s, 0, 0), sgn > 0 ? '四周 捲揚' : '', V(sgn * W / 2, 1.2, L * (0.3 - i * 0.25)), true));
-        return;
-      }
-      const net = k !== 'film';
-      const cell = k === 'insectNet' ? 0.12 : 0.3;
-      sidePanels(k, C.side[k], net, cell, true, { long: true, end: true, top: H - FILM_DROP + 0.05, layer: i })
-        .forEach(p => addPart(p.obj, p.ex, (p.side > 0 && !p.end) ? '四周 ' + SIDE_MATS[k] : '', p.anchor, true));
+      addPart(grp, V(0, 0, sz * 1.0 * s), '', V(0, H, z), isHot);
     });
   }
 
-  // ── S 線（卡膜槽）：兩側滴水處下 0.3 米的縱向線＋前後拱線 ──
-  if (isRepair) {
-    const hot = hotSet.has('sLine');
-    const grp = new THREE.Group();
-    const m = lineMat(C.sLine, hot);
-    const lg = keep(new THREE.CylinderGeometry(0.06, 0.06, L, 6)); lg.rotateX(Math.PI / 2);
-    [-1, 1].forEach(sgn => { const t = new THREE.Mesh(lg, m); t.position.set(sgn * (W / 2 + 0.07), H - FILM_DROP, 0); grp.add(t); });
-    const eg = tubeAlong(roofProfile(0.07).map(p => V(p[0], p[1], 0)), 0.06);
-    [-1, 1].forEach(sgn => { const t = new THREE.Mesh(eg, m); t.position.z = sgn * L / 2; grp.add(t); });
-    addPart(grp, V(0, 0.8 * s, 0), 'S 線（卡膜槽）', V(W / 2, H - FILM_DROP, -L * 0.3), hot);
+  // ── 屋頂（往上爆開，越外層越高） ──
+  const roofLayers = isRepair ? ['film'] : d.m.roof;
+  roofLayers.forEach((k, i) => {
+    const off = 0.06 + i * 0.05;
+    const isHot = isRepair ? !!hot.roofFilm : false;
+    const kind = K[k];
+    const cell = kind.net === 'fine' ? 0.15 : kind.net ? 0.3 : 1;
+    const mesh = outline(new THREE.Mesh(sweep(roofProfile(off), L, cell), mat(kind, isHot)), isHot);
+    const exY = (2.2 + i * 1.7) * s;
+    addPart(mesh, V(0, exY, 0), isRepair ? '農膜' : ROOF_MATS[k], V(-W * 0.12, H + rise + off, L * (0.25 - i * 0.22)), isHot);
+  });
 
-    // ── 黑繩（壓膜繩）：每兩支拱之間跨過屋頂 ──
-    const hr = hotSet.has('rope');
-    const rg = tubeAlong(roofProfile(0.14).map(p => V(p[0], p[1], 0)), 0.035);
-    const ropes = new THREE.InstancedMesh(rg, lineMat(C.rope, hr), hoopN - 1);
-    for (let i = 0; i < hoopN - 1; i++) { mtx.makeTranslation(0, 0, -L / 2 + (L * (i + 0.5)) / (hoopN - 1)); ropes.setMatrixAt(i, mtx); }
-    addPart(ropes, V(0, 3.2 * s, 0), '黑繩（壓膜繩）', V(0, H + rise + 0.14, -L * 0.25), hr);
+  // ── 黑繩（壓膜繩）：每兩支拱之間跨過屋頂（維修才畫） ──
+  if (isRepair) {
+    const rg = tubePath(roofProfile(0.12).map(p => V(p[0], p[1], 0)), 0.012, 5);
+    const ropes = new THREE.InstancedMesh(rg, mat(K.rope, !!hot.rope), hoopN - 1);
+    for (let i = 0; i < hoopN - 1; i++) { mtx.makeTranslation(0, 0, (zAt(i) + zAt(i + 1)) / 2); ropes.setMatrixAt(i, mtx); }
+    addPart(ropes, V(0, 3.9 * s, 0), '黑繩', V(W * 0.15, H + rise + 0.12, -L * 0.25), !!hot.rope);
   }
 
-  parts.forEach(p => { p.base = p.obj.position.clone(); });
+  // ── 四周：網（內層，固定）／膜（外層，固定或捲揚） ──
+  // layer：0＝網、1＝膜；爆開越外層越遠
+  function longPanel(kind, isHot, layer, y0, y1, label, labelSide = 1) {
+    const off = 0.08 + layer * 0.06;
+    const cell = kind.net === 'fine' ? 0.15 : kind.net ? 0.3 : 1;
+    [-1, 1].forEach(sg => {
+      const g = scaleUV(keep(new THREE.PlaneGeometry(L, y1 - y0)), L / cell, (y1 - y0) / cell);
+      g.rotateY(Math.PI / 2);
+      const m = outline(new THREE.Mesh(g, mat(kind, isHot)), isHot);
+      m.position.set(sg * (W / 2 + off), (y0 + y1) / 2, 0);
+      addPart(m, V(sg * (2.0 + layer * 1.7) * s, 0, 0), sg === labelSide ? label : '', V(sg * (W / 2 + off), (y0 + y1) * 0.55, L * (0.32 - layer * 0.3)), isHot);
+    });
+  }
+  function endPanel(kind, isHot, layer, label) {
+    const off = 0.08 + layer * 0.06;
+    const cell = kind.net === 'fine' ? 0.15 : kind.net ? 0.3 : 1;
+    [-1, 1].forEach(sz => {
+      const g = keep(new THREE.ShapeGeometry(endShape(sz > 0), 6));
+      scaleUV(g, 1 / cell, 1 / cell);
+      const m = outline(new THREE.Mesh(g, mat(kind, isHot)), isHot);
+      m.position.set(0, 0, sz * (L / 2 + off));
+      addPart(m, V(0, 0, sz * (2.0 + layer * 1.7) * s), sz > 0 ? label : '', V(W * 0.22, H * 0.55, sz * (L / 2 + off)), isHot);
+    });
+  }
+  // 捲揚：滴水處以下的捲揚膜＋底部捲揚管＋手搖器（長邊在前端、端面在右側）
+  function winchSet(where, isHot, layer, label) {
+    const off = 0.1 + layer * 0.06;
+    const fm = mat(K.winchFilm, isHot), tm = mat(K.steel, isHot), cm = mat(K.crank, isHot);
+    const y0 = 0.35, y1 = H - 0.05;
+    if (where.long) [-1, 1].forEach(sg => {
+      const grp = new THREE.Group();
+      const g = keep(new THREE.PlaneGeometry(L, y1 - y0)); g.rotateY(Math.PI / 2);
+      const film = outline(new THREE.Mesh(g, fm), isHot); film.position.set(0, (y0 + y1) / 2, 0); grp.add(film);
+      bar(V(0.03, y0, -L / 2), V(0.03, y0, L / 2 + 0.25), 0.04, tm, grp);                  // 捲揚管
+      const crank = new THREE.Mesh(keep(new THREE.BoxGeometry(0.14, 0.22, 0.14)), cm);   // 手搖器
+      crank.position.set(0.08, 1.0, L / 2 + 0.25); crank.castShadow = true; grp.add(crank);
+      bar(V(0.05, y0, L / 2 + 0.25), V(0.08, 0.9, L / 2 + 0.25), 0.015, tm, grp);
+      grp.position.set(sg * (W / 2 + off), 0, 0);
+      addPart(grp, V(sg * (2.0 + layer * 1.7) * s, 0, 0), sg > 0 ? label : '', V(sg * (W / 2 + off), H * 0.5, -L * 0.2), isHot);
+    });
+    if (where.end) [-1, 1].forEach(sz => {
+      const grp = new THREE.Group();
+      const film = outline(new THREE.Mesh(keep(new THREE.PlaneGeometry(W, y1 - y0)), fm), isHot);
+      film.position.set(0, (y0 + y1) / 2, 0); grp.add(film);
+      bar(V(-W / 2, y0, 0.03), V(W / 2 + 0.25, y0, 0.03), 0.04, tm, grp);
+      const crank = new THREE.Mesh(keep(new THREE.BoxGeometry(0.14, 0.22, 0.14)), cm);
+      crank.position.set(W / 2 + 0.25, 1.0, 0.08); crank.castShadow = true; grp.add(crank);
+      bar(V(W / 2 + 0.25, y0, 0.05), V(W / 2 + 0.25, 0.9, 0.08), 0.015, tm, grp);
+      grp.position.set(0, 0, sz * (L / 2 + off));
+      addPart(grp, V(0, 0, sz * (2.0 + layer * 1.7) * s), sz > 0 && !where.long ? label : '', V(-W * 0.25, H * 0.5, sz * (L / 2 + off)), isHot);
+    });
+  }
+  // 門片（前端面，往前飄出）
+  function doorPart() {
+    const grp = new THREE.Group();
+    const dm = mat(K.door, false);
+    const [x0, x1] = doorX;
+    [[V(x0, 0.1, 0), V(x0, 2.1, 0)], [V(x1, 0.1, 0), V(x1, 2.1, 0)], [V(x0, 0.1, 0), V(x1, 0.1, 0)], [V(x0, 2.1, 0), V(x1, 2.1, 0)], [V(x0, 1.1, 0), V(x1, 1.1, 0)]]
+      .forEach(([a, b]) => bar(a, b, 0.02, dm, grp));
+    const g = scaleUV(keep(new THREE.PlaneGeometry(x1 - x0, 2.0)), (x1 - x0) / 0.15, 2 / 0.15);
+    const mesh = new THREE.Mesh(g, mat(K.insectNet, false));
+    mesh.position.set((x0 + x1) / 2, 1.1, 0); grp.add(mesh);
+    grp.position.set(0, 0, L / 2 + 0.02);
+    addPart(grp, V(0, 0, 4.4 * s), '門 1.2×2.0米', V((x0 + x1) / 2, 2.1, L / 2), false);
+  }
+
+  if (isRepair) {
+    // 現有溫室：四周黑網（內）＋捲揚（兩側；選了前後／四周才畫端面捲揚）
+    longPanel(K.blackNet, !!hot.netLong, 0, 0.05, H, hot.netLong ? '網子（兩側）' : '網子');
+    endPanel(K.blackNet, !!hot.netEnd, 0, hot.netEnd ? '網子（前後）' : '');
+    winchSet({ long: true, end: false }, !!hot.winchLong, 1, '捲揚（兩側）');
+    if (hot.winchEnd) winchSet({ long: false, end: true }, true, 1, '捲揚（前後）');
+    doorPart();
+  } else {
+    const m = d.m;
+    if (m.net && m.net !== 'none') {
+      longPanel(K[m.net], false, 0, 0.05, H, NET_OPTS[m.net] + '（內）');
+      endPanel(K[m.net], false, 0, '');
+    }
+    if (m.film === 'fixed') {
+      longPanel(K.film, false, 1, 0.05, H, '農膜（外，固定）', -1);
+      endPanel(K.film, false, 1, '');
+    } else if (m.film === 'winch') {
+      const ws = m.winchSide;
+      winchSet({ long: ws === '兩側' || ws === '四周', end: ws === '前後' || ws === '四周' }, false, 1, `捲揚（${ws}）`);
+    }
+    doorPart();
+  }
+
+  parts.forEach(p => { p.base = p.obj.position.clone(); p.obj.traverse(o => { if (o.isMesh && !o.material.transparent) o.castShadow = true; }); });
+
+  // ── 引導線（細虛線，從原位連到飄出的零件） ──
+  const guideParts = parts.filter(p => p.label);
+  const gPos = new Float32Array(guideParts.length * 6);
+  const gGeo = keep(new THREE.BufferGeometry());
+  gGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3));
+  const gMat = keep(new THREE.LineDashedMaterial({ color: 0x6b7480, dashSize: 0.18, gapSize: 0.12, transparent: true, opacity: 0.7 }));
+  const guides = new THREE.LineSegments(gGeo, gMat);
+  guides.frustumCulled = false;
+  scene.add(guides);
 
   // ── 標籤（HTML，跟著 3D 位置走） ──
   const labelBox = stage.querySelector('.gh3d-labels');
   parts.forEach(p => {
     if (!p.label) return;
     const el = document.createElement('div');
-    el.className = 'gh3d-tag' + (isRepair && p.hot ? ' hot' : '') + (isRepair && !p.hot ? ' dim' : '');
-    el.textContent = isRepair && p.hot ? '要換 ' + p.label : p.label;
+    el.className = 'gh3d-tag' + (p.hot ? ' hot' : '');
+    el.textContent = p.hot ? '要換 ' + p.label : p.label;
     labelBox.appendChild(el);
     p.el = el;
   });
@@ -375,21 +562,20 @@ function createViewer(THREE, OrbitControls, stage, d) {
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.enablePan = false;
-  // 依「爆開後」的範圍取景
   const box3 = new THREE.Box3(V(-W / 2, 0, -L / 2), V(W / 2, H + rise, L / 2));
-  parts.forEach(p => { box3.expandByPoint(p.anchor.clone().add(p.ex)); });
+  parts.forEach(p => { p.obj.position.copy(p.base).add(p.ex); p.obj.updateMatrixWorld(true); box3.expandByObject(p.obj); p.obj.position.copy(p.base); });
   const ctr = box3.getCenter(new THREE.Vector3()), size = box3.getSize(new THREE.Vector3());
   const radius = size.length() / 2;
   controls.target.copy(ctr);
-  const dir = V(1, 0.62, 0.78).normalize();
-  camera.position.copy(ctr).addScaledVector(dir, radius / Math.sin((camera.fov / 2) * Math.PI / 180) * 0.78);
-  controls.minDistance = radius * 0.6;
-  controls.maxDistance = radius * 5;
+  const dir = V(1, 0.62, 1.15).normalize();
+  camera.position.copy(ctr).addScaledVector(dir, radius / Math.sin((camera.fov / 2) * Math.PI / 180) * 0.86);
+  controls.minDistance = radius * 0.5;
+  controls.maxDistance = radius * 4;
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.update();
 
   // ── 爆開動畫 ──
-  let t = 0, goal = 1;           // 打開時從合起動畫到爆開
+  let t = 0, goal = 1;
   const btn = stage.querySelector('.gh3d-toggle');
   const hint = stage.querySelector('.gh3d-hint');
   btn.classList.remove('hidden'); hint.classList.remove('hidden');
@@ -411,10 +597,17 @@ function createViewer(THREE, OrbitControls, stage, d) {
     raf = requestAnimationFrame(frameLoop);
     if (document.hidden) return;
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    t += Math.sign(goal - t) * Math.min(Math.abs(goal - t), dt * 1.6);
+    t += Math.sign(goal - t) * Math.min(Math.abs(goal - t), dt * 1.4);
     const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;   // easeInOut
     parts.forEach(p => p.obj.position.copy(p.base).addScaledVector(p.ex, e));
-    const pulse = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(now / 280));
+    guideParts.forEach((p, i) => {
+      const a = p.anchor, b = tmp.copy(p.anchor).addScaledVector(p.ex, e);
+      gPos.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
+    });
+    gGeo.attributes.position.needsUpdate = true;
+    guides.computeLineDistances();
+    guides.visible = e > 0.05;
+    const pulse = 0.35 + 0.35 * (0.5 + 0.5 * Math.sin(now / 300));
     hotMats.forEach(m => { m.emissiveIntensity = pulse; });
     controls.update();
     renderer.render(scene, camera);
@@ -423,14 +616,13 @@ function createViewer(THREE, OrbitControls, stage, d) {
     const placed = [];
     parts.forEach(p => {
       if (!p.el) return;
-      tmp.copy(p.anchor).addScaledVector(p.ex, e).project(camera);   // anchor 是合起時的世界座標
+      tmp.copy(p.anchor).addScaledVector(p.ex, e).project(camera);
       const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
       p.el.style.display = vis ? '' : 'none';
       if (vis) {
         const ow = p.ow || (p.ow = p.el.offsetWidth), oh = p.oh || (p.oh = p.el.offsetHeight || 20);
         const x = Math.min(Math.max(((tmp.x + 1) / 2) * w, ow / 2 + 4), w - ow / 2 - 4);
         let y = Math.min(Math.max(((1 - tmp.y) / 2) * h, 14), h - 14);
-        // 標籤互相重疊就往下挪
         for (let k = 0; k < 6; k++) {
           const hit = placed.find(q => Math.abs(q.x - x) < (q.w + ow) / 2 + 2 && Math.abs(q.y - y) < (q.h + oh) / 2 + 2);
           if (!hit) break;
@@ -449,8 +641,8 @@ function createViewer(THREE, OrbitControls, stage, d) {
       cancelAnimationFrame(raf);
       ro.disconnect();
       controls.dispose();
+      scene.traverse(o => { if (o.isInstancedMesh) o.dispose(); });
       disposables.forEach(o => { try { o.dispose(); } catch (e) { /* 忽略 */ } });
-      hoops.dispose && hoops.dispose();
       renderer.dispose();
       try { renderer.forceContextLoss(); } catch (e) { /* 忽略 */ }
       canvas.remove();

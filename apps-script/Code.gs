@@ -20,7 +20,9 @@ var CASE_HEADERS = [
   'materials' // 2026-11-23 新增（新建的四周／屋頂材料 JSON），放表尾；舊試算表重跑 setup() 會補上
 ];
 var JSON_COLS = ['buildings', 'repair', 'photos', 'materials'];
-var SIDE_MATS = ['blackNet', 'winch', 'film', 'insectNet'];
+var NET_OPTS = ['blackNet', 'insectNet', 'none'];   // 四周網（內層，單選）
+var FILM_OPTS = ['none', 'fixed', 'winch'];         // 四周膜（外層，單選）
+var WINCH_SIDES = ['兩側', '前後', '四周'];
 var ROOF_MATS = ['film', 'canvas', 'knitNet', 'shade'];
 var STATUSES = ['survey', 'building', 'done', 'dropped'];
 var ACTIVE = '啟用';
@@ -98,7 +100,7 @@ function seedTestData() {
       customerName: '測試王小明', phone: '0900-000-001', lat: 22.9105, lng: 121.1352,
       address: '臺東縣鹿野鄉龍田村（測試）', workType: 'new',
       buildings: [{ length: 30, width: 6, count: 2 }, { length: 20, width: 8, count: 1 }], repair: null,
-      materials: { side: ['blackNet', 'winch'], roof: ['canvas', 'knitNet'] },
+      materials: { net: 'blackNet', film: 'winch', winchSide: '兩側', roof: ['canvas', 'knitNet'] },
       photos: [], notes: '測試：場勘中，超過 7 天沒動，應出現紅框',
       status: 'survey', statusUpdatedAt: new Date(now - 10 * day), nextAction: '補報價單', owner: '', dueDate: ''
     },
@@ -107,7 +109,7 @@ function seedTestData() {
       customerName: '測試李大華', phone: '0900-000-002', lat: 22.9262, lng: 121.1158,
       address: '臺東縣鹿野鄉永安村（測試）', workType: 'repair',
       buildings: [{ length: 40, width: 7, count: 1 }],
-      repair: { film: { arc: 9.5, length: 40, notMeasured: false }, net: { side: '兩側' }, sLine: true, winch: true, other: '' },
+      repair: { film: { arc: 9.5, length: 40, notMeasured: false }, net: { side: '兩側' }, sLine: true, winch: { side: '兩側' }, other: '' },
       materials: null,
       photos: [], notes: '測試：施工中',
       status: 'building', statusUpdatedAt: new Date(now - 3 * day), nextAction: '換膜收尾', owner: '', dueDate: ''
@@ -117,7 +119,7 @@ function seedTestData() {
       customerName: '測試陳美玲', phone: '0900-000-003', lat: 22.9568, lng: 121.1531,
       address: '臺東縣鹿野鄉瑞源村（測試）', workType: 'new',
       buildings: [{ length: 50, width: 8, count: 3 }], repair: null,
-      materials: { side: ['insectNet', 'film'], roof: ['film', 'shade'] },
+      materials: { net: 'insectNet', film: 'fixed', winchSide: '', roof: ['film', 'shade'] },
       photos: [], notes: '測試：已完工',
       status: 'done', statusUpdatedAt: new Date(now - 5 * day), nextAction: '', owner: '', dueDate: ''
     }
@@ -125,9 +127,10 @@ function seedTestData() {
   rows.forEach(function (c) {
     var row = findCaseRow_(sheet, c.caseId);
     if (row > 0) {
-      // 已存在：只補上新欄位 materials（之前插入的測試資料沒有）
+      // 已存在：材料欄改成新格式（之前插入的是舊格式或空的）；只動測試資料
       var col = CASE_HEADERS.indexOf('materials') + 1;
-      if (c.materials && !sheet.getRange(row, col).getValue()) sheet.getRange(row, col).setValue(JSON.stringify(c.materials));
+      if (c.materials) sheet.getRange(row, col).setValue(JSON.stringify(c.materials));
+      if (c.repair && c.repair.winch) sheet.getRange(row, CASE_HEADERS.indexOf('repair') + 1).setValue(JSON.stringify(c.repair));
       return;
     }
     sheet.appendRow(caseToRow_(c));
@@ -398,17 +401,13 @@ function cleanCase_(c) {
     if (r.film) repair.film = { arc: num_(r.film.arc), length: num_(r.film.length), notMeasured: !!r.film.notMeasured };
     if (r.net) repair.net = { side: ['兩側', '前後', '四周'].indexOf(r.net.side) >= 0 ? r.net.side : '' };
     if (r.sLine) repair.sLine = true;
-    if (r.winch) repair.winch = true;
+    if (r.winch) repair.winch = { side: (r.winch && WINCH_SIDES.indexOf(r.winch.side) >= 0) ? r.winch.side : '兩側' };
     if (r.blackRope) repair.blackRope = true;
     if (r.other) repair.other = str_(r.other, 500);
   }
   var materials = null;
   if (workType === 'new') {
-    var m = c.materials || {};
-    var pick = function (list, allowed) {
-      return allowed.filter(function (k) { return Array.isArray(list) && list.indexOf(k) >= 0; });
-    };
-    materials = { side: pick(m.side, SIDE_MATS), roof: pick(m.roof, ROOF_MATS) };
+    materials = normMaterials_(c.materials);
   }
   return {
     customerName: str_(c.customerName, 50),
@@ -495,3 +494,20 @@ function str_(v, max) { return String(v == null ? '' : v).trim().slice(0, max ||
 function num_(v) { var n = parseFloat(v); return isFinite(n) ? Math.round(n * 1e6) / 1e6 : 0; }
 function fail_(code, msg) { var e = new Error(msg); e.code = code; return e; }
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+
+/** 新建材料整理：{ net, film, winchSide, roof:[] }；舊格式 { side:[...], roof:[...] } 自動轉換 */
+function normMaterials_(m) {
+  m = m || {};
+  var roof = ROOF_MATS.filter(function (k) { return Array.isArray(m.roof) && m.roof.indexOf(k) >= 0; });
+  var net = '', film = '', winchSide = '';
+  if (Array.isArray(m.side)) {
+    net = m.side.indexOf('blackNet') >= 0 ? 'blackNet' : m.side.indexOf('insectNet') >= 0 ? 'insectNet' : '';
+    film = m.side.indexOf('winch') >= 0 ? 'winch' : m.side.indexOf('film') >= 0 ? 'fixed' : '';
+  } else {
+    net = NET_OPTS.indexOf(m.net) >= 0 ? m.net : '';
+    film = FILM_OPTS.indexOf(m.film) >= 0 ? m.film : '';
+    winchSide = m.winchSide;
+  }
+  winchSide = film === 'winch' ? (WINCH_SIDES.indexOf(winchSide) >= 0 ? winchSide : '兩側') : '';
+  return { net: net, film: film, winchSide: winchSide, roof: roof };
+}
